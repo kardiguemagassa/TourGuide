@@ -1,5 +1,6 @@
 package com.openclassrooms.tourguide.service;
 
+import com.openclassrooms.tourguide.dto.NearByAttractionDTO;
 import com.openclassrooms.tourguide.helper.InternalTestHelper;
 import com.openclassrooms.tourguide.tracker.Tracker;
 import com.openclassrooms.tourguide.user.User;
@@ -7,14 +8,7 @@ import com.openclassrooms.tourguide.user.UserReward;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Random;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -27,11 +21,13 @@ import gpsUtil.location.Attraction;
 import gpsUtil.location.Location;
 import gpsUtil.location.VisitedLocation;
 
+import rewardCentral.RewardCentral;
 import tripPricer.Provider;
 import tripPricer.TripPricer;
 
 @Service
 public class TourGuideService {
+
 	private Logger logger = LoggerFactory.getLogger(TourGuideService.class);
 	private final GpsUtil gpsUtil;
 	private final RewardsService rewardsService;
@@ -39,10 +35,36 @@ public class TourGuideService {
 	public final Tracker tracker;
 	boolean testMode = true;
 
+	private final RewardCentral rewardCentral = new RewardCentral();
+
+	public List<NearByAttractionDTO> getNearbyAttractionsWithDetails(User user) {
+		VisitedLocation visitedLocation = getUserLocation(user);
+		Location userLocation = visitedLocation.location;
+
+		return gpsUtil.getAttractions().stream()
+				.sorted(Comparator.comparingDouble(attraction ->
+						getDistance(userLocation, attraction)))
+				.limit(5)
+				.map(attraction -> {
+					double distance = getDistance(userLocation, attraction);
+					int rewardPoints = rewardCentral.getAttractionRewardPoints(attraction.attractionId, user.getUserId());
+					return new NearByAttractionDTO(
+							attraction.attractionName,
+							attraction.latitude,
+							attraction.longitude,
+							userLocation.latitude,
+							userLocation.longitude,
+							distance,
+							rewardPoints
+					);
+				})
+				.collect(Collectors.toList());
+	}
+
 	public TourGuideService(GpsUtil gpsUtil, RewardsService rewardsService) {
 		this.gpsUtil = gpsUtil;
 		this.rewardsService = rewardsService;
-		
+
 		Locale.setDefault(Locale.US);
 
 		if (testMode) {
@@ -96,14 +118,27 @@ public class TourGuideService {
 	}
 
 	public List<Attraction> getNearByAttractions(VisitedLocation visitedLocation) {
-		List<Attraction> nearbyAttractions = new ArrayList<>();
-		for (Attraction attraction : gpsUtil.getAttractions()) {
-			if (rewardsService.isWithinAttractionProximity(attraction, visitedLocation.location)) {
-				nearbyAttractions.add(attraction);
-			}
-		}
+		Location userLocation = visitedLocation.location;
 
-		return nearbyAttractions;
+		return gpsUtil.getAttractions().stream()
+				.sorted(Comparator.comparingDouble(attraction ->
+						getDistance(userLocation, attraction))).limit(5).collect(Collectors.toList());
+	}
+
+	// la distance entre deux points
+	private double getDistance(Location loc1, Location loc2) {
+		double lat1 = loc1.latitude;
+		double lon1 = loc1.longitude;
+		double lat2 = loc2.latitude;
+		double lon2 = loc2.longitude;
+
+		double theta = lon1 - lon2;
+		double dist = Math.sin(Math.toRadians(lat1)) * Math.sin(Math.toRadians(lat2)) +
+				Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) * Math.cos(Math.toRadians(theta));
+		dist = Math.acos(dist);
+		dist = Math.toDegrees(dist);
+		dist = dist * 60 * 1.1515; // miles
+		return dist;
 	}
 
 	private void addShutDownHook() {
@@ -115,9 +150,9 @@ public class TourGuideService {
 	}
 
 	/**********************************************************************************
-	 * 
+	 *
 	 * Methods Below: For Internal Testing
-	 * 
+	 *
 	 **********************************************************************************/
 	private static final String tripPricerApiKey = "test-server-api-key";
 	// Database connection will be used for external users, but for testing purposes
