@@ -13,6 +13,7 @@ import com.openclassrooms.tourguide.service.TourGuideService;
 import com.openclassrooms.tourguide.user.User;
 
 public class Tracker extends Thread {
+
 	private Logger logger = LoggerFactory.getLogger(Tracker.class);
 	private static final long trackingPollingInterval = TimeUnit.MINUTES.toSeconds(5);
 	private final ExecutorService executorService = Executors.newSingleThreadExecutor();
@@ -26,6 +27,7 @@ public class Tracker extends Thread {
 	}
 
 	/**
+	 * Tracker qui s'exécute en arrière-plan et qui ajoute périodiquement de nouvelles VisitedLocation à la liste user.getVisitedLocations().
 	 * Assures to shut down the Tracker thread
 	 */
 	public void stopTracking() {
