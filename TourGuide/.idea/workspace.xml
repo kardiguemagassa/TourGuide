@@ -1,0 +1,251 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="8afcce3c-90a9-4f82-84d3-ec1576726c66" name="Changes" comment="" />
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Class" />
+      </list>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$/.." />
+  </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;kardiguemagassa&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;git@github.com:kardiguemagassa/JavaPathENProject8.git&quot;,
+    &quot;accountId&quot;: &quot;b03eeebc-5b5e-4050-94db-133e2f7f27ca&quot;
+  }
+}</component>
+  <component name="KubernetesApiPersistence">{}</component>
+  <component name="KubernetesApiProvider">{
+  &quot;isMigrated&quot;: true
+}</component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 5
+}</component>
+  <component name="ProjectId" id="2y2k4K50UyDBGLAglKQRpNONGo1" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Application.TourguideApplication.executor": "Run",
+    "JUnit.TestPerformance.executor": "Run",
+    "JUnit.TestPerformance.highVolumeGetRewards.executor": "Run",
+    "JUnit.TestPerformance.highVolumeGetRewardsOptimized.executor": "Run",
+    "JUnit.TestPerformance.highVolumeGetRewardsWithMetrics.executor": "Run",
+    "JUnit.TestPerformance.highVolumeTrackLocation.executor": "Run",
+    "JUnit.TestPerformance.highVolumeTrackLocations.executor": "Run",
+    "JUnit.TestPerformance.memoryEfficiencyTest.executor": "Run",
+    "JUnit.TestPerformance.performanceScalingTest.executor": "Run",
+    "JUnit.TestPerformance.testCalculateRewardsPerformance.executor": "Run",
+    "JUnit.TestRewardsService.isWithinAttractionProximity.executor": "Run",
+    "JUnit.TestRewardsService.nearAllAttractions.executor": "Run",
+    "JUnit.TestRewardsService.userGetRewards.executor": "Run",
+    "JUnit.TestTourGuideService.addUser.executor": "Run",
+    "JUnit.TestTourGuideService.executor": "Run",
+    "JUnit.TestTourGuideService.getAllUsers.executor": "Run",
+    "JUnit.TestTourGuideService.getNearbyAttractions.executor": "Run",
+    "JUnit.TestTourGuideService.getTripDeals.executor": "Run",
+    "JUnit.TestTourGuideService.getTripDeals_shouldReturnExpectedNumberOfProviders.executor": "Run",
+    "JUnit.TestTourGuideService.getUserLocation.executor": "Run",
+    "JUnit.TestTourGuideService.trackUser.executor": "Run",
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RequestMappingsPanelOrder0": "0",
+    "RequestMappingsPanelOrder1": "1",
+    "RequestMappingsPanelWidth0": "75",
+    "RequestMappingsPanelWidth1": "75",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "Spring Boot.TourguideApplication.executor": "Run",
+    "git-widget-placeholder": "fixTestSeviceController",
+    "last_opened_file_path": "/Users/kara/Documents/Developer/Learning/back-end/Open-c/procject/p-08/JavaPathENProject8/TourGuide",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "project.structure.last.edited": "Project",
+    "project.structure.proportion": "0.15",
+    "project.structure.side.proportion": "0.2",
+    "settings.editor.selected.configurable": "reference.projectsettings.compiler.javacompiler",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="RunManager" selected="Spring Boot.TourguideApplication">
+    <configuration name="TestPerformance.highVolumeGetRewards" type="JUnit" factoryName="JUnit" temporary="true" nameIsGenerated="true">
+      <module name="tourguide" />
+      <extension name="coverage">
+        <pattern>
+          <option name="PATTERN" value="com.openclassrooms.tourguide.*" />
+          <option name="ENABLED" value="true" />
+        </pattern>
+      </extension>
+      <option name="PACKAGE_NAME" value="com.openclassrooms.tourguide" />
+      <option name="MAIN_CLASS_NAME" value="com.openclassrooms.tourguide.TestPerformance" />
+      <option name="METHOD_NAME" value="highVolumeGetRewards" />
+      <option name="TEST_OBJECT" value="method" />
+      <method v="2">
+        <option name="Make" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="TestPerformance.highVolumeTrackLocation" type="JUnit" factoryName="JUnit" temporary="true" nameIsGenerated="true">
+      <module name="tourguide" />
+      <extension name="coverage">
+        <pattern>
+          <option name="PATTERN" value="com.openclassrooms.tourguide.*" />
+          <option name="ENABLED" value="true" />
+        </pattern>
+      </extension>
+      <option name="PACKAGE_NAME" value="com.openclassrooms.tourguide" />
+      <option name="MAIN_CLASS_NAME" value="com.openclassrooms.tourguide.TestPerformance" />
+      <option name="METHOD_NAME" value="highVolumeTrackLocation" />
+      <option name="TEST_OBJECT" value="method" />
+      <method v="2">
+        <option name="Make" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="TestTourGuideService.addUser" type="JUnit" factoryName="JUnit" temporary="true" nameIsGenerated="true">
+      <module name="tourguide" />
+      <extension name="coverage">
+        <pattern>
+          <option name="PATTERN" value="com.openclassrooms.tourguide.*" />
+          <option name="ENABLED" value="true" />
+        </pattern>
+      </extension>
+      <option name="PACKAGE_NAME" value="com.openclassrooms.tourguide" />
+      <option name="MAIN_CLASS_NAME" value="com.openclassrooms.tourguide.TestTourGuideService" />
+      <option name="METHOD_NAME" value="addUser" />
+      <option name="TEST_OBJECT" value="method" />
+      <method v="2">
+        <option name="Make" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="TestTourGuideService.getNearbyAttractions" type="JUnit" factoryName="JUnit" temporary="true" nameIsGenerated="true">
+      <module name="tourguide" />
+      <extension name="coverage">
+        <pattern>
+          <option name="PATTERN" value="com.openclassrooms.tourguide.*" />
+          <option name="ENABLED" value="true" />
+        </pattern>
+      </extension>
+      <option name="PACKAGE_NAME" value="com.openclassrooms.tourguide" />
+      <option name="MAIN_CLASS_NAME" value="com.openclassrooms.tourguide.TestTourGuideService" />
+      <option name="METHOD_NAME" value="getNearbyAttractions" />
+      <option name="TEST_OBJECT" value="method" />
+      <method v="2">
+        <option name="Make" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="TestTourGuideService.getUserLocation" type="JUnit" factoryName="JUnit" temporary="true" nameIsGenerated="true">
+      <module name="tourguide" />
+      <extension name="coverage">
+        <pattern>
+          <option name="PATTERN" value="com.openclassrooms.tourguide.*" />
+          <option name="ENABLED" value="true" />
+        </pattern>
+      </extension>
+      <option name="PACKAGE_NAME" value="com.openclassrooms.tourguide" />
+      <option name="MAIN_CLASS_NAME" value="com.openclassrooms.tourguide.TestTourGuideService" />
+      <option name="METHOD_NAME" value="getUserLocation" />
+      <option name="TEST_OBJECT" value="method" />
+      <method v="2">
+        <option name="Make" enabled="true" />
+      </method>
+    </configuration>
+    <configuration default="true" type="JetRunConfigurationType">
+      <module name="TourGuide" />
+      <method v="2">
+        <option name="Make" enabled="true" />
+      </method>
+    </configuration>
+    <configuration default="true" type="KotlinStandaloneScriptRunConfigurationType">
+      <module name="TourGuide" />
+      <option name="filePath" />
+      <method v="2" />
+    </configuration>
+    <configuration name="TourguideApplication" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot" nameIsGenerated="true">
+      <module name="tourguide" />
+      <option name="SPRING_BOOT_MAIN_CLASS" value="com.openclassrooms.tourguide.TourguideApplication" />
+      <method v="2">
+        <option name="Make" enabled="true" />
+      </method>
+    </configuration>
+    <recent_temporary>
+      <list>
+        <item itemvalue="JUnit.TestPerformance.highVolumeTrackLocation" />
+        <item itemvalue="JUnit.TestTourGuideService.getNearbyAttractions" />
+        <item itemvalue="JUnit.TestPerformance.highVolumeGetRewards" />
+        <item itemvalue="JUnit.TestTourGuideService.getUserLocation" />
+        <item itemvalue="JUnit.TestTourGuideService.addUser" />
+      </list>
+    </recent_temporary>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-jdk-9823dce3aa75-fbdcb00ec9e3-intellij.indexing.shared.core-IU-251.26927.53" />
+        <option value="bundled-js-predefined-d6986cc7102b-09060db00ec0-JavaScript-IU-251.26927.53" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="8afcce3c-90a9-4f82-84d3-ec1576726c66" name="Changes" comment="" />
+      <created>1749039862905</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1749039862905</updated>
+      <workItem from="1749039864038" duration="92000" />
+      <workItem from="1749039974299" duration="4593000" />
+      <workItem from="1749105694512" duration="757000" />
+      <workItem from="1749106933470" duration="10000" />
+      <workItem from="1749674643580" duration="31000" />
+      <workItem from="1749674678581" duration="71000" />
+      <workItem from="1749674761188" duration="22000" />
+      <workItem from="1749674798067" duration="194000" />
+      <workItem from="1749675015087" duration="24000" />
+      <workItem from="1749675096910" duration="49000" />
+      <workItem from="1749675196870" duration="75000" />
+      <workItem from="1749711662555" duration="21337000" />
+      <workItem from="1749800941622" duration="629000" />
+      <workItem from="1749801614554" duration="10197000" />
+      <workItem from="1749817244728" duration="74000" />
+      <workItem from="1749835231417" duration="597000" />
+      <workItem from="1750257042667" duration="462000" />
+      <workItem from="1750318198464" duration="23111000" />
+      <workItem from="1750407533655" duration="11929000" />
+      <workItem from="1750669481242" duration="14399000" />
+      <workItem from="1750696758041" duration="4849000" />
+      <workItem from="1750749168824" duration="15342000" />
+      <workItem from="1750786104311" duration="54000" />
+      <workItem from="1750839432438" duration="1916000" />
+      <workItem from="1750860511069" duration="6437000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="XSLT-Support.FileAssociations.UIState">
+    <expand />
+    <select />
+  </component>
+</project>
