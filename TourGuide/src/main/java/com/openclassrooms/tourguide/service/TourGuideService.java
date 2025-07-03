@@ -37,7 +37,6 @@ public class TourGuideService {
 	public final Tracker tracker;
 	boolean testMode = true;
 	private static final String tripPricerApiKey = "test-server-api-key";
-	// calcule les points de récompense que les utilisateurs gagnent lorsqu’ils visitent certains lieux.
 	private final RewardCentral rewardCentral = new RewardCentral();
 
 	private final ExecutorService executorService;
@@ -45,11 +44,12 @@ public class TourGuideService {
 	private final Map<String, User> internalUserMap = new ConcurrentHashMap<>(); // gère automatiquement la synchronisation
 
 	public TourGuideService(GpsUtil gpsUtil, RewardsService rewardsService) {
+		LOGGER.info("Initializing TourGuideService");
 		this.gpsUtil = gpsUtil;
 		this.rewardsService = rewardsService;
 
 		// Configuration du pool de threads
-        int numberOfThreads = Runtime.getRuntime().availableProcessors() * 2;
+        int numberOfThreads = Runtime.getRuntime().availableProcessors() * 4;
 
 		this.executorService = new ThreadPoolExecutor(
                 numberOfThreads,
@@ -59,9 +59,10 @@ public class TourGuideService {
 				new LinkedBlockingQueue<>(1000),
 				new ThreadPoolExecutor.CallerRunsPolicy()); // Politique de fallback
 
-		LOGGER.info("Thread pool size initialized to {}", numberOfThreads);
+		//LOGGER.info("Thread pool size initialized to {}", numberOfThreads);
+		LOGGER.info("RewardsService thread pool: core={}, max={}", numberOfThreads, numberOfThreads * 2);
 
-		Locale.setDefault(Locale.FRANCE);
+		Locale.setDefault(Locale.US);
 
 		if (testMode) {
 			LOGGER.info("TestMode enabled");
@@ -69,7 +70,7 @@ public class TourGuideService {
 			initializeInternalUsers();
 			LOGGER.debug("Finished initializing users");
 		}
-		tracker = new Tracker(this); // surveiller la localisation des utilisateurs en conti
+		tracker = new Tracker(this); // surveiller la localisation des utilisateurs
 		addShutDownHook(); // sauvegarder des données, libérer des ressources
 	}
 
@@ -82,41 +83,15 @@ public class TourGuideService {
 	 * Utilise le parallélisme pour traiter plusieurs utilisateurs simultanément
 	 */
 	public void trackAllUsersOptimized() {
-		LOGGER.debug("Begin tracking all users optimized");
+		List<CompletableFuture<Void>> futures = getAllUsers().stream()
+				.map(user -> CompletableFuture.runAsync(() -> {
+					VisitedLocation visitedLocation = gpsUtil.getUserLocation(user.getUserId());
+					user.addToVisitedLocations(visitedLocation);
+					rewardsService.calculateRewardsAsync(user);
+				}, executorService))
+				.toList();
 
-		List<User> users = getAllUsers();
-		List<CompletableFuture<Void>> futures = new ArrayList<>();
-
-		// Traitement parallèle des utilisateurs
-		for (User user : users) {
-			CompletableFuture<Void> future = CompletableFuture
-					.supplyAsync(() -> {
-						// Obtenir la nouvelle location
-						VisitedLocation visitedLocation = gpsUtil.getUserLocation(user.getUserId());
-						user.addToVisitedLocations(visitedLocation);
-						return visitedLocation;
-					}, executorService)
-					.thenCompose(visitedLocation -> {
-						// Calculer les récompenses de manière asynchrone
-						return rewardsService.calculateRewardsAsync(user);
-					});
-			futures.add(future);
-		}
-
-		// Attendre que tous les traitements soient terminés
-		CompletableFuture<Void> allFutures = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
-
-		try {
-			// Timeout pour éviter les blocages infinis
-			allFutures.get(30, TimeUnit.SECONDS);
-			LOGGER.debug("Finished tracking all users optimized");
-		} catch (TimeoutException e) {
-			LOGGER.error("Error while tracking all users", e);
-			allFutures.cancel(true);
-		} catch (Exception e) {
-			LOGGER.error("Error while tracking all users", e);
-
-		}
+		CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join(); // Attendre la fin de tous les traitements
 	}
 
 	/**
@@ -144,7 +119,6 @@ public class TourGuideService {
 							.thenApply(v -> visitedLocation);
 				});
 	}
-
 
 
 	public List<NearByAttractionDTO> getNearbyAttractionsWithDetails(User user) {
@@ -204,9 +178,10 @@ public class TourGuideService {
 		return providers;
 	}
 
+	// récupérer position + ajouter à la liste
 	public VisitedLocation trackUserLocation(User user) {
 		VisitedLocation visitedLocation = gpsUtil.getUserLocation(user.getUserId());
-		user.addToVisitedLocations(visitedLocation);
+		user.addToVisitedLocations(visitedLocation); // Une seule opération GPS par utilisateur (O(n))
 		rewardsService.calculateRewards(user);
 		return visitedLocation;
 	}

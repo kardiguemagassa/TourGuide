@@ -1,231 +1,142 @@
 package com.openclassrooms.tourguide.service;
 
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
-
-import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.openclassrooms.tourguide.user.User;
+import com.openclassrooms.tourguide.user.UserReward;
 import gpsUtil.GpsUtil;
 import gpsUtil.location.Attraction;
 import gpsUtil.location.Location;
 import gpsUtil.location.VisitedLocation;
+import jakarta.annotation.PreDestroy;
+import org.apache.commons.lang3.time.StopWatch;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 import rewardCentral.RewardCentral;
-import com.openclassrooms.tourguide.user.User;
-import com.openclassrooms.tourguide.user.UserReward;
+
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.stream.Collectors;
 
 @Service
 public class RewardsService {
-
 	private static final Logger LOGGER = LoggerFactory.getLogger(RewardsService.class);
 	private static final double STATUTE_MILES_PER_NAUTICAL_MILE = 1.15077945;
+	private static final int DEFAULT_PROXIMITY_BUFFER = 10;
+	private int proximityBuffer = DEFAULT_PROXIMITY_BUFFER;
 
-	// Configuration des distances
-	private final int defaultProximityBuffer = 10;
-	private int proximityBuffer = defaultProximityBuffer;
-	private int defaultAttractionProximity = 200;
-
-	// Services externes
 	private final GpsUtil gpsUtil;
 	private final RewardCentral rewardsCentral;
+	private final ExecutorService executorService;
 
-	// Pool de threads très optimisé pour les performances
-	private final ForkJoinPool forkJoinPool;
+	// Cache des attractions
+	private final List<Attraction> attractions;
+	// Cache des points de récompense par attraction
+	private final Cache<UUID, Integer> attractionRewardCache;
 
-	// Cache pour optimiser les performances
-	private final ConcurrentHashMap<String, Integer> rewardPointsCache = new ConcurrentHashMap<>();
-	private volatile List<Attraction> attractionsCache;
 
 	public RewardsService(GpsUtil gpsUtil, RewardCentral rewardCentral) {
 		this.gpsUtil = gpsUtil;
 		this.rewardsCentral = rewardCentral;
 
-		// Utilisation d'un ForkJoinPool optimisé pour les tâches parallèles intensives
-		int parallelism = Runtime.getRuntime().availableProcessors() * 4; // Plus agressif
-		this.forkJoinPool = new ForkJoinPool(parallelism);
+		StopWatch watch = new StopWatch();
+		watch.start();
+		LOGGER.info("Initializing RewardsService");
 
-		LOGGER.info("RewardsService initialized with {} threads", parallelism);
-		Locale.setDefault(Locale.FRANCE);
+		// Charge toutes les attractions une seule fois au démarrage et les rend immuables.
+		this.attractions = Collections.unmodifiableList(gpsUtil.getAttractions());
 
-		// Pré-charger le cache des attractions
-		getAttractionsWithCache();
+		int availableProcessors = Runtime.getRuntime().availableProcessors();
+		this.executorService = Executors.newFixedThreadPool(availableProcessors * 4);
+
+		this.attractionRewardCache = Caffeine.newBuilder() // eviter les appels répétés à RewardCentral
+				.maximumSize(100_000)
+				.expireAfterWrite(1, TimeUnit.HOURS)
+				.build();
+
+		//Pré-charge les points de récompense pour toutes les attractions dans le cache.
+		preloadAttractionRewards();
+
+		// Arrêter le chronomètre et le temps de démarrage.
+		watch.stop();
+		LOGGER.info("RewardsService initialized in {} ms", watch.getTime());
 	}
 
-	/**
-	 * Version hautement optimisée pour les gros volumes
-	 */
-	public CompletableFuture<Void> calculateRewardsForAllUsers(List<User> users) {
-		if (users == null || users.isEmpty()) {
-			return CompletableFuture.completedFuture(null);
-		}
-
-		return CompletableFuture.runAsync(() -> {
-			List<Attraction> attractions = getAttractionsWithCache();
-
-			// Traitement parallèle ultra-optimisé
-			users.parallelStream().forEach(user -> {
-				calculateRewardsOptimized(user, attractions);
-			});
-		}, forkJoinPool);
-	}
-
-	/**
-	 * Version ultra-optimisée du calcul des récompenses
-	 */
-	private void calculateRewardsOptimized(User user, List<Attraction> attractions) {
-		if (user == null || user.getVisitedLocations().isEmpty()) {
-			return;
-		}
-
-		// Set des attractions déjà récompensées (accès O(1))
-		Set<UUID> alreadyRewardedAttractions = user.getUserRewards().stream()
-				.map(r -> r.attraction.attractionId)
-				.collect(Collectors.toSet());
-
-		// Liste pour collecter les nouvelles récompenses
-		List<UserReward> newRewards = new ArrayList<>();
-
-		// Optimisation : traitement en parallèle des locations visitées
-		user.getVisitedLocations().parallelStream().forEach(visitedLocation -> {
-			for (Attraction attraction : attractions) {
-				// Skip si déjà récompensé
-				if (alreadyRewardedAttractions.contains(attraction.attractionId)) {
-					continue;
-				}
-
-				// Calcul de distance optimisé
-				if (isNearAttractionOptimized(visitedLocation, attraction)) {
-					int rewardPoints = getRewardPointsWithCache(attraction, user);
-
-					synchronized (newRewards) {
-						// Vérifier encore une fois pour éviter les doublons
-						if (!alreadyRewardedAttractions.contains(attraction.attractionId)) {
-							newRewards.add(new UserReward(visitedLocation, attraction, rewardPoints));
-							alreadyRewardedAttractions.add(attraction.attractionId);
-						}
-					}
-				}
-			}
+	private void preloadAttractionRewards() {
+		LOGGER.info("Preloading attraction rewards for {} attractions", attractions.size());
+		attractions.forEach(attraction -> {
+			UUID syntheticUserId = UUID.nameUUIDFromBytes(attraction.attractionId.toString().getBytes());
+			// Récupérer les points
+			int points = rewardsCentral.getAttractionRewardPoints(attraction.attractionId, syntheticUserId);
+			//Stocke dans le cache.
+			attractionRewardCache.put(attraction.attractionId, points);
 		});
-
-		// Ajouter toutes les nouvelles récompenses d'un coup
-		if (!newRewards.isEmpty()) {
-			synchronized (user.getUserRewards()) {
-				user.getUserRewards().addAll(newRewards);
-			}
-		}
 	}
 
-	/**
-	 * Version synchrone optimisée
-	 */
-	public void calculateRewards(User user) {
-		calculateRewardsOptimized(user, getAttractionsWithCache());
+	// Calcule asynchrone des récompenses pour un utilisateur.
+	public CompletableFuture<Void> calculateRewards(User user) {
+		return CompletableFuture.runAsync(() -> {
+			//Récuperer les visites de l’utilisateur.
+			List<VisitedLocation> userLocations = new ArrayList<>(user.getVisitedLocations());
+			//Évite de recalculer les attractions déjà récompensées. Set est fait pour ça
+			Set<UUID> alreadyRewarded = getAlreadyRewardedAttractions(user);
+
+			// Parcourt les localisations et traite chaque visite pour voir si une récompense peut être ajoutée.
+			userLocations.forEach(visitedLocation ->
+					processVisitedLocation(user, visitedLocation, alreadyRewarded)
+			);
+		}, executorService);
 	}
 
-	/**
-	 * Version asynchrone
-	 */
 	public CompletableFuture<Void> calculateRewardsAsync(User user) {
-		return CompletableFuture.runAsync(() -> calculateRewards(user), forkJoinPool);
+		return CompletableFuture.runAsync(() -> calculateRewards(user), executorService);
 	}
 
-	/**
-	 * Calcul des récompenses pour plusieurs utilisateurs
-	 */
-	public CompletableFuture<Void> calculateRewardsForUsers(List<User> users) {
-		return calculateRewardsForAllUsers(users);
+	// Retourner l’ensemble des attractionId déjà récompensées.
+	private Set<UUID> getAlreadyRewardedAttractions(User user) {
+		return user.getUserRewards().stream()
+				.map(reward -> reward.attraction.attractionId)
+				.collect(Collectors.toSet());
 	}
 
-	/**
-	 * Traitement par batch ultra-optimisé
-	 */
-	public CompletableFuture<Void> calculateRewardsInBatches(List<User> users, int batchSize) {
-		if (users == null || users.isEmpty()) {
-			return CompletableFuture.completedFuture(null);
-		}
-
-		return CompletableFuture.runAsync(() -> {
-			// Traitement parallèle des batches
-			IntStream.range(0, (users.size() + batchSize - 1) / batchSize)
-					.parallel()
-					.forEach(i -> {
-						int start = i * batchSize;
-						int end = Math.min(start + batchSize, users.size());
-						List<User> batch = users.subList(start, end);
-
-						// Traitement parallèle du batch
-						batch.parallelStream().forEach(user ->
-								calculateRewardsOptimized(user, getAttractionsWithCache()));
-					});
-		}, forkJoinPool);
+	// 1 Ignorer les attractions déjà récompensées., 2 Vérifier la proximité., 3 Ajouter la récompense si proche.
+	private void processVisitedLocation(User user, VisitedLocation visitedLocation, Set<UUID> alreadyRewarded) {
+		attractions.stream()
+				.filter(attraction -> !alreadyRewarded.contains(attraction.attractionId))
+				.filter(attraction -> isWithinProximity(attraction, visitedLocation.location))
+				.forEach(attraction -> addUserReward(user, visitedLocation, attraction));
 	}
 
-	/**
-	 * Cache thread-safe ultra-rapide pour les attractions
-	 */
-	private List<Attraction> getAttractionsWithCache() {
-		if (attractionsCache == null) {
-			synchronized (this) {
-				if (attractionsCache == null) {
-					attractionsCache = gpsUtil.getAttractions();
-					LOGGER.info("Attractions cache initialized with {} attractions", attractionsCache.size());
-				}
-			}
-		}
-		return attractionsCache;
-	}
-
-	/**
-	 * Cache optimisé pour les points de récompense
-	 */
-	private int getRewardPointsWithCache(Attraction attraction, User user) {
-		String cacheKey = attraction.attractionId + "_" + user.getUserId();
-		return rewardPointsCache.computeIfAbsent(cacheKey, k -> {
-			try {
-				return rewardsCentral.getAttractionRewardPoints(attraction.attractionId, user.getUserId());
-			} catch (Exception e) {
-				LOGGER.warn("Error getting reward points for attraction {}, user {}",
-						attraction.attractionId, user.getUserId());
-				return 0;
-			}
-		});
-	}
-
-	/**
-	 * Calcul de proximité ultra-optimisé avec pré-filtre
-	 */
-	private boolean isNearAttractionOptimized(VisitedLocation visitedLocation, Attraction attraction) {
-		Location location = visitedLocation.location;
-
-		// Pré-filtre rapide basé sur les coordonnées
-		double latDiff = Math.abs(attraction.latitude - location.latitude);
-		double lonDiff = Math.abs(attraction.longitude - location.longitude);
-
-		// Si trop éloigné, pas besoin de calculer la distance exacte
-		// Approximation : 1 degré ≈ 69 miles
-		if (latDiff > proximityBuffer / 69.0 || lonDiff > proximityBuffer / 69.0) {
-			return false;
-		}
-
-		// Calcul précis seulement si nécessaire
+	// Vérifier si une attraction est dans le rayon de proximité.
+	private boolean isWithinProximity(Attraction attraction, Location location) {
 		return getDistance(attraction, location) <= proximityBuffer;
 	}
 
-	/**
-	 * Vérifie si une location est dans la proximité d'une attraction
-	 */
-	public boolean isWithinAttractionProximity(Attraction attraction, Location location) {
-		return getDistance(attraction, location) <= defaultAttractionProximity;
+	// Récuperer les points et ajoute une récompense à l'utilisateur.
+	private void addUserReward(User user, VisitedLocation visitedLocation, Attraction attraction) {
+		int rewardPoints = getRewardPoints(attraction, user.getUserId());
+		user.addUserReward(new UserReward(visitedLocation, attraction, rewardPoints));
 	}
 
-	/**
-	 * Calcul de distance optimisé
-	 */
+	// Récuperer les points depuis le cache ou les calcule si manquant
+	private int getRewardPoints(Attraction attraction, UUID userId) {
+		return attractionRewardCache.get(
+				attraction.attractionId,
+				id -> rewardsCentral.getAttractionRewardPoints(attraction.attractionId, userId)
+		);
+	}
+
+	// Lancer le calcul de récompenses pour tous les utilisateurs en parallèle.
+	public CompletableFuture<Void> calculateRewardsForAllUsers(List<User> users) {
+		List<CompletableFuture<Void>> futures = users.stream()
+				.map(this::calculateRewards)
+				.toList();
+
+		return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+	}
+
+	// Calculer la distance en miles entre deux localisations
 	public double getDistance(Location loc1, Location loc2) {
 		double lat1 = Math.toRadians(loc1.latitude);
 		double lon1 = Math.toRadians(loc1.longitude);
@@ -235,57 +146,27 @@ public class RewardsService {
 		double angle = Math.acos(Math.sin(lat1) * Math.sin(lat2)
 				+ Math.cos(lat1) * Math.cos(lat2) * Math.cos(lon1 - lon2));
 
-		double nauticalMiles = 60 * Math.toDegrees(angle);
-		return STATUTE_MILES_PER_NAUTICAL_MILE * nauticalMiles;
+		return STATUTE_MILES_PER_NAUTICAL_MILE * Math.toDegrees(angle) * 60;
 	}
 
-	/**
-	 * Nettoyage du cache
-	 */
-	public void clearCache() {
-		rewardPointsCache.clear();
-		attractionsCache = null;
-		LOGGER.info("Rewards cache cleared");
-	}
-
-	/**
-	 * Statistiques du cache
-	 */
-	public void logCacheStats() {
-		LOGGER.info("Cache stats - Reward points: {}, Attractions cached: {}",
-				rewardPointsCache.size(), attractionsCache != null ? attractionsCache.size() : 0);
-	}
-
-	// Setters pour la configuration
+	// Gestion de la proximité
 	public void setProximityBuffer(int proximityBuffer) {
 		this.proximityBuffer = proximityBuffer;
 	}
 
+	// MÉTHODES SPÉCIFIQUES POUR LES TESTS // ancienne methode
+	public boolean isWithinAttractionProximity(Attraction attraction, Location location) {
+		int defaultAttractionProximity = 200;
+		return getDistance(location, attraction) <= defaultAttractionProximity;
+	}
+
 	public void setDefaultProximityBuffer() {
-		this.proximityBuffer = defaultProximityBuffer;
+		this.proximityBuffer = DEFAULT_PROXIMITY_BUFFER;
 	}
 
-	public void setDefaultAttractionProximity(int defaultAttractionProximity) {
-		this.defaultAttractionProximity = defaultAttractionProximity;
-	}
-
-	/**
-	 * Nettoyage des ressources
-	 */
 	@PreDestroy
 	public void shutdown() {
 		LOGGER.info("Shutting down RewardsService");
-
-		forkJoinPool.shutdown();
-		try {
-			if (!forkJoinPool.awaitTermination(30, TimeUnit.SECONDS)) {
-				forkJoinPool.shutdownNow();
-			}
-		} catch (InterruptedException e) {
-			forkJoinPool.shutdownNow();
-			Thread.currentThread().interrupt();
-		}
-
-		clearCache();
+		executorService.shutdown();
 	}
 }
