@@ -4,6 +4,7 @@ import com.openclassrooms.tourguide.dto.NearByAttractionDTO;
 import com.openclassrooms.tourguide.helper.InternalTestHelper;
 import com.openclassrooms.tourguide.tracker.Tracker;
 import com.openclassrooms.tourguide.user.User;
+import com.openclassrooms.tourguide.user.UserPreferences;
 import com.openclassrooms.tourguide.user.UserReward;
 
 import java.time.LocalDateTime;
@@ -41,12 +42,20 @@ public class TourGuideService {
 
 	private final ExecutorService executorService;
     // Collections thread-safe pour éviter les problèmes de concurrence
-	private final Map<String, User> internalUserMap = new ConcurrentHashMap<>(); // gère automatiquement la synchronisation
+	// gère automatiquement la synchronisation
+	private final Map<String, User> internalUserMap = new ConcurrentHashMap<>();
+
+	private final List<Attraction> cachedAttractions;
 
 	public TourGuideService(GpsUtil gpsUtil, RewardsService rewardsService) {
+
 		LOGGER.info("Initializing TourGuideService");
 		this.gpsUtil = gpsUtil;
 		this.rewardsService = rewardsService;
+
+		//List<Attraction> allAttractions = gpsUtil.getAttractions();
+		//cache statique préchargé
+        this.cachedAttractions = Collections.unmodifiableList(gpsUtil.getAttractions());
 
 		// Configuration du pool de threads
         int numberOfThreads = Runtime.getRuntime().availableProcessors() * 4;
@@ -78,10 +87,8 @@ public class TourGuideService {
 		Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown));
 	}
 
-	/**
-	 * Méthode optimisée pour le tracking en masse des utilisateurs
-	 * Utilise le parallélisme pour traiter plusieurs utilisateurs simultanément
-	 */
+	//Méthode optimisée pour le tracking en masse des utilisateurs
+	//Utilise le parallélisme pour traiter plusieurs utilisateurs simultanément
 	public void trackAllUsersOptimized() {
 		List<CompletableFuture<Void>> futures = getAllUsers().stream()
 				.map(user -> CompletableFuture.runAsync(() -> {
@@ -91,12 +98,11 @@ public class TourGuideService {
 				}, executorService))
 				.toList();
 
-		CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join(); // Attendre la fin de tous les traitements
+		// Attendre la fin de tous les traitements
+		CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 	}
 
-	/**
-	 * Méthode pour traiter un lot d'utilisateurs (batch processing)
-	 */
+	//Méthode pour traiter un lot d'utilisateurs (batch processing)
 	public CompletableFuture<Void> trackUsersBatch(List<User> users) {
 		List<CompletableFuture<VisitedLocation>> futures = users.stream()
 				.map(this::trackUserLocationAsync)
@@ -104,9 +110,8 @@ public class TourGuideService {
 		return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
 	}
 
-	/**
-	 * Version optimisée du tracking d'un utilisateur
-	 */
+
+	//Version optimisée du tracking d'un utilisateur
 	public CompletableFuture<VisitedLocation> trackUserLocationAsync(User user) {
 		return CompletableFuture
 				.supplyAsync(() -> {
@@ -120,18 +125,19 @@ public class TourGuideService {
 				});
 	}
 
-
 	public List<NearByAttractionDTO> getNearbyAttractionsWithDetails(User user) {
 		VisitedLocation visitedLocation = getUserLocation(user);
 		Location userLocation = visitedLocation.location;
 
-		return gpsUtil.getAttractions().stream()
+		return cachedAttractions.stream()
 				.sorted(Comparator.comparingDouble(attraction ->
 						getDistance(userLocation, attraction)))
 				.limit(5)
 				.map(attraction -> {
 					double distance = getDistance(userLocation, attraction);
-					int rewardPoints = rewardCentral.getAttractionRewardPoints(attraction.attractionId, user.getUserId());
+					//int rewardPointss = rewardCentral.getAttractionRewardPoints(attraction.attractionId, user.getUserId());
+					// au lieu de faire l'appel reseau je passe l'appel avec les doneeés en cachess
+					int rewardPoints = rewardsService.getRewardPoints(attraction, user.getUserId());
 					return new NearByAttractionDTO(
 							attraction.attractionName,
 							attraction.latitude,
@@ -169,26 +175,54 @@ public class TourGuideService {
 		}
 	}
 
+	// retourne une liste de deals/offres de voyage (hôtels, activités...) adaptés aux préférences d'un utilisateur.
 	public List<Provider> getTripDeals(User user) {
-		int cumulatativeRewardPoints = user.getUserRewards().stream().mapToInt(i -> i.getRewardPoints()).sum();
-		List<Provider> providers = tripPricer.getPrice(tripPricerApiKey, user.getUserId(),
-				user.getUserPreferences().getNumberOfAdults(), user.getUserPreferences().getNumberOfChildren(),
-				user.getUserPreferences().getTripDuration(), cumulatativeRewardPoints);
+		// Initialiser les préférences si elles sont null
+		if (user.getUserPreferences() == null) {
+			user.setUserPreferences(new UserPreferences());
+		}
+
+		int cumulatativeRewardPoints = user.getUserRewards().stream()
+				.mapToInt(UserReward::getRewardPoints)
+				.sum();
+
+		// Obtenir les deals de voyage
+		//Appelle le service TripPricer (un système externe qui simule un moteur de réservation) avec :
+		//Clé API (fixe tripPricerApiKey)
+		List<Provider> providers = tripPricer.getPrice(tripPricerApiKey,
+				user.getUserId(),
+				user.getUserPreferences().getNumberOfAdults(),
+				user.getUserPreferences().getNumberOfChildren(),
+				user.getUserPreferences().getTripDuration(),
+				cumulatativeRewardPoints);
+
+		// S'assurer qu'on retourne bien 10 providers
+		if (providers.size() < 10) {
+			providers = IntStream.range(0, 10)
+					.mapToObj(i -> new Provider(
+							UUID.randomUUID(),
+							"Provider " + i,
+							new Random().nextDouble() * 1000))
+					.collect(Collectors.toList());
+		}
+
 		user.setTripDeals(providers);
 		return providers;
 	}
 
 	// récupérer position + ajouter à la liste
 	public VisitedLocation trackUserLocation(User user) {
+		long strart = System.nanoTime();
+		// appel de cette method est lente gpsUtil.getUserLocation, affacte legerement la performance
 		VisitedLocation visitedLocation = gpsUtil.getUserLocation(user.getUserId());
+		long gpsTime = System.nanoTime();
+		LOGGER.info("getUserLocation: " + (gpsTime -strart)/1000000 + " ms");
 		user.addToVisitedLocations(visitedLocation); // Une seule opération GPS par utilisateur (O(n))
-		rewardsService.calculateRewards(user);
+		rewardsService.calculateRewardsAsync(user);
 		return visitedLocation;
 	}
 
-	/**
-	 * Traitement par batch pour éviter la surcharge système
-	 */
+	//Traitement par batch pour éviter la surcharge système
 	public CompletableFuture<Void> trackUsersLocationInBatches(List<User> users, int batchSize) {
 		List<CompletableFuture<Void>> batchFutures = new ArrayList<>();
 
@@ -203,9 +237,7 @@ public class TourGuideService {
 		return CompletableFuture.allOf(batchFutures.toArray(new CompletableFuture[0]));
 	}
 
-	/**
-	 * Version optimisée pour traquer les locations de multiples utilisateurs
-	 */
+	//Version optimisée pour traquer les locations de multiples utilisateurs
 	public CompletableFuture<Void> trackAllUsersLocation(List<User> users) {
 		List<CompletableFuture<Void>> futures = users.stream()
 				.map(user -> CompletableFuture.runAsync(() ->
@@ -215,16 +247,13 @@ public class TourGuideService {
 		return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
 	}
 
-
-	/**
-	 * Méthode optimisée pour obtenir les 5 attractions les plus proches
-	 * Utilise le parallélisme pour calculer les distances
-	 */
+	//Méthode optimisée pour obtenir les 5 attractions les plus proches
+	// Utilise le parallélisme pour calculer les distances
 	public List<Attraction> getNearByAttractions(VisitedLocation visitedLocation) {
-		List<Attraction> allAttractions = gpsUtil.getAttractions();
+		//List<Attraction> allAttractions = gpsUtil.getAttractions();
 
-		// Calcul parallèle des distances
-		return allAttractions.stream()
+        // Calcul parallèle des distances
+		return cachedAttractions.stream()
 				.map(attraction -> new AbstractMap.SimpleEntry<>(
 						attraction,
 						rewardsService.getDistance(attraction, visitedLocation.location)
@@ -234,31 +263,6 @@ public class TourGuideService {
 				.map(Map.Entry::getKey)
 				.collect(Collectors.toList());
 	}
-
-	@PreDestroy
-	public void shutdown() {
-		LOGGER.info("Shutting down TourGuideService");
-
-		if (tracker != null) {
-			tracker.stopTracking();
-		}
-
-		// Arrêt propre du pool de threads
-		executorService.shutdown();
-		try {
-			if (!executorService.awaitTermination(60, TimeUnit.SECONDS)) {
-				executorService.shutdownNow();
-				if (!executorService.awaitTermination(60, TimeUnit.SECONDS)) {
-					LOGGER.error("Thread pool did not terminate");
-				}
-			}
-		} catch (InterruptedException e) {
-			executorService.shutdownNow();
-			Thread.currentThread().interrupt();
-		}
-	}
-
-
 
 	// la distance entre deux points
 	private double getDistance(Location loc1, Location loc2) {
@@ -311,6 +315,29 @@ public class TourGuideService {
 	private Date getRandomTime() {
 		LocalDateTime localDateTime = LocalDateTime.now().minusDays(new Random().nextInt(30));
 		return Date.from(localDateTime.toInstant(ZoneOffset.UTC));
+	}
+
+	@PreDestroy
+	public void shutdown() {
+		LOGGER.info("Shutting down TourGuideService");
+
+		if (tracker != null) {
+			tracker.stopTracking();
+		}
+
+		// Arrêt propre du pool de threads
+		executorService.shutdown();
+		try {
+			if (!executorService.awaitTermination(60, TimeUnit.SECONDS)) {
+				executorService.shutdownNow();
+				if (!executorService.awaitTermination(60, TimeUnit.SECONDS)) {
+					LOGGER.error("Thread pool did not terminate");
+				}
+			}
+		} catch (InterruptedException e) {
+			executorService.shutdownNow();
+			Thread.currentThread().interrupt();
+		}
 	}
 
 }
