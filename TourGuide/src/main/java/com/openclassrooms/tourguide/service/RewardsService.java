@@ -110,13 +110,13 @@ public class RewardsService {
 	}
 
 	// Vérifier si une attraction est dans le rayon de proximité (utilise le proximityBuffer)
-	private boolean isWithinProximity(Attraction attraction, Location location) {
+	/*private boolean isWithinProximity(Attraction attraction, Location location) {
 		double distance = getDistance(attraction, location);
 		boolean within = distance <= proximityBuffer;
 		LOGGER.debug("Checking {}: distance={} miles, buffer={} miles, within={}",
 				attraction.attractionName, distance, proximityBuffer, within);
 		return within;
-	}
+	}*/
 
 	// Calculer la distance en miles entre deux localisations
 	public double getDistance(Location loc1, Location loc2) {
@@ -174,9 +174,9 @@ public class RewardsService {
 		return getDistance(location, attraction) <= defaultAttractionProximity;
 	}
 
-	public void setDefaultProximityBuffer() {
+	/*public void setDefaultProximityBuffer() {
 		this.proximityBuffer = DEFAULT_PROXIMITY_BUFFER;
-	}
+	}*/
 
 	@PreDestroy
 	public void shutdown() {

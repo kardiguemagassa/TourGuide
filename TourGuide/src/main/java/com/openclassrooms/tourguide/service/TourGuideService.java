@@ -40,6 +40,8 @@ public class TourGuideService {
 	private static final String tripPricerApiKey = "test-server-api-key";
 	private final RewardCentral rewardCentral = new RewardCentral();
 
+	private static final Random RANDOM = new Random(); // au niveau de la classe
+
 	private final ExecutorService executorService;
     // Collections thread-safe pour éviter les problèmes de concurrence
 	// gère automatiquement la synchronisation
@@ -202,7 +204,7 @@ public class TourGuideService {
 					.mapToObj(i -> new Provider(
 							UUID.randomUUID(),
 							"Provider " + i,
-							new Random().nextDouble() * 1000))
+							RANDOM.nextDouble() * 1000))
 					.collect(Collectors.toList());
 		}
 
