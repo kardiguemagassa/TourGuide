@@ -1110,4 +1110,8 @@ public class TourguideApplication {
 	Être asynchrone et performant
 	Profiter de la programmation déclarative
 	 */
+
+	/*
+	relancer à chaque modification de code
+	mvn clean verify sonar:sonar -Dsonar.login=squ_c33404c12894eedfb40869d51a34105f5272a451 */
 }
