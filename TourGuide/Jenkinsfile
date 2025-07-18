@@ -1,13 +1,15 @@
+def ENV_NAME = getEnvName(env.BRANCH_NAME)
+def CONTAINER_NAME = "tourguide-app-" +ENV_NAME
+def CONTAINER_TAG = getTag(env.BUILD_NUMBER, env.BRANCH_NAME)
+def HTTP_PORT = getHTTPPort(env.BRANCH_NAME)
+def EMAIL_RECIPIENTS = "magassakara@gmail.com"
+
+
 node {
-    def ENV_NAME
-    def CONTAINER_NAME
-    def CONTAINER_TAG
-    def HTTP_PORT
-    def EMAIL_RECIPIENTS = "magassakara@gmail.com"
     try {
         stage('Initialize') {
-            def dockerHome = tool 'dockerlts'
-            def mavenHome = tool 'mavenlts'
+            def dockerHome = tool 'DockerLts'
+            def mavenHome = tool 'MavenLts'
             env.PATH = "${dockerHome}/bin:${mavenHome}/bin:${env.PATH}"
         }
 
@@ -97,19 +99,19 @@ String getEnvName(String branchName) {
     if (branchName == 'main') {
         return 'prod'
     }
-    return (branchName == 'develop') ? 'uat' : 'dev'
+    return (branchName == 'ready') ? 'uat' : 'dev'
 }
 
 String getHTTPPort(String branchName) {
     if (branchName == 'main') {
-        return '9003'
+        return '9999'
     }
-    return (branchName == 'develop') ? '9002' : '9001'
+    return (branchName == 'ready') ? '8888' : '8090'
 }
 
 String getTag(String buildNumber, String branchName) {
     if (branchName == 'main') {
-        return buildNumber + '-unstable'
+        return buildNumber + '-stable'
     }
-    return buildNumber + '-stable'
+    return buildNumber + '-unstable'
 }
