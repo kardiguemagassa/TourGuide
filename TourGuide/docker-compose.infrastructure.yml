@@ -1,0 +1,101 @@
+# Services partagés entre projets
+services:
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: jenkins
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_data:/var/jenkins_home
+      - ./backups/jenkins:/backups
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./jenkins/init:/usr/share/jenkins/ref/init.groovy.d # ←cette ligne use jenkins password
+    env_file:
+      - .env
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
+    networks:
+      - ci-network
+    restart: unless-stopped
+    user: root
+
+  wait-for-sonar-db:
+    image: busybox:1.35
+    depends_on:
+      - sonardb
+    entrypoint: >
+      sh -c "
+        echo 'Attente de sonardb (PostgreSQL)...';
+        while ! nc -z sonardb 5432; do
+          sleep 2;
+        done;
+        echo 'sonardb est prêt.';
+      "
+    networks:
+      - ci-network
+
+  sonarqube:
+    image: sonarqube:lts
+    container_name: sonarqube
+    ports:
+      - "9000:9000"
+    env_file:
+      - .env
+    environment:
+      - SONARQUBE_JDBC_URL=jdbc:postgresql://sonardb:5432/${SONAR_POSTGRES_DB}
+      - SONARQUBE_JDBC_USERNAME=${SONAR_POSTGRES_USER}
+      - SONARQUBE_JDBC_PASSWORD=${SONAR_POSTGRES_PASSWORD}
+      - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true
+      - sonar.search.javaOpts=-Xms512m -Xmx512m
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
+    networks:
+      - ci-network
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    depends_on:
+      - wait-for-sonar-db
+
+  sonardb:
+    image: postgres:13
+    container_name: sonardb
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_USER=${SONAR_POSTGRES_USER}
+      - POSTGRES_PASSWORD=${SONAR_POSTGRES_PASSWORD}
+      - POSTGRES_DB=${SONAR_POSTGRES_DB}
+    volumes:
+      - sonarqube_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SONAR_POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ci-network
+    restart: unless-stopped
+
+volumes:
+  jenkins_data:
+    driver: local
+  sonarqube_data:
+    driver: local
+  sonarqube_extensions:
+    driver: local
+  sonarqube_logs:
+    driver: local
+  sonarqube_db:
+    driver: local
+
+networks:
+  ci-network:
+    name: ci-network
+    external: true

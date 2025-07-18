@@ -1,0 +1,16 @@
+services:
+  tourguide:
+    build: .
+    container_name: tourguide-app
+    ports:
+      - "8082:8080"
+    env_file: .env.tourguide
+    networks:
+      - ci-network
+    restart: unless-stopped
+
+  #Pas de depends_on sur Jenkins/SonarQube car ils sont externes
+
+networks:
+  ci-network:
+    external: true
