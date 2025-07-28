@@ -3,7 +3,7 @@ def config = [
     containerName: "Tourguide-app",
     dockerRegistry: "docker.io",
     dockerHome: '/usr/local/bin',
-    sonarProjectKey: "Tourguide",
+    sonarProjectKey: "tourguide",
     timeouts: [
         qualityGate: 2,
         deployment: 5
@@ -56,6 +56,39 @@ pipeline {
 
                     // Affichage de la configuration
                     displayBuildInfo(config)
+                }
+            }
+        }
+
+        stage('Install Local Dependencies') {
+            steps {
+                script {
+                    echo "📦 Installation des dépendances locales (libs/*.jar)..."
+                    sh '''
+                        mvn install:install-file \
+                          -Dfile=libs/gpsUtil.jar \
+                          -DgroupId=gpsUtil \
+                          -DartifactId=gpsUtil \
+                          -Dversion=1.0.0 \
+                          -Dpackaging=jar \
+                          -Dmaven.repo.local=${WORKSPACE}/.m2/repository
+
+                        mvn install:install-file \
+                          -Dfile=libs/TripPricer.jar \
+                          -DgroupId=tripPricer \
+                          -DartifactId=tripPricer \
+                          -Dversion=1.0.0 \
+                          -Dpackaging=jar \
+                          -Dmaven.repo.local=${WORKSPACE}/.m2/repository
+
+                        mvn install:install-file \
+                          -Dfile=libs/rewardCentral.jar \
+                          -DgroupId=rewardCentral \
+                          -DartifactId=rewardCentral \
+                          -Dversion=1.0.0 \
+                          -Dpackaging=jar \
+                          -Dmaven.repo.local=${WORKSPACE}/.m2/repository
+                    '''
                 }
             }
         }
