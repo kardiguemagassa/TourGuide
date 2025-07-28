@@ -1,9 +1,9 @@
 def config = [
     emailRecipients: "magassakara@gmail.com",
-    containerName: "poseidon-app",
+    containerName: "Tourguide-app",
     dockerRegistry: "docker.io",
     dockerHome: '/usr/local/bin',
-    sonarProjectKey: "Poseidon-skeleton",
+    sonarProjectKey: "Tourguide",
     timeouts: [
         qualityGate: 2,
         deployment: 5
