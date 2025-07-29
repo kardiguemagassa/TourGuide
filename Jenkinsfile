@@ -48,7 +48,7 @@ pipeline {
     }
 
     // Les tools seront configurés dynamiquement dans le pipeline
-    tools {}
+    // tools {} - Supprimé car Jenkins n'accepte pas une section vide
 
     environment {
         DOCKER_BUILDKIT = "1"
