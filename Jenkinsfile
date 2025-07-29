@@ -8,7 +8,8 @@ def getConfig() {
         sonarProjectKey: "Tourguide",
         timeouts: [
             qualityGate: 2,
-            deployment: 5
+            deployment: 5,
+            securityAudit: 3
         ],
         ports: [
             master: '9003',
@@ -39,20 +40,13 @@ pipeline {
     }
 
     environment {
-        // Chargement de la configuration
         CONFIG = getConfig()
-
-        // Détection de l'environnement Docker
         IS_DOCKERIZED = sh(script: 'if grep -q docker /proc/1/cgroup 2>/dev/null; then echo "true"; else echo "false"; fi', returnStdout: true).trim()
-
-        // Configuration des outils
         MAVEN_HOME = "${IS_DOCKERIZED == 'true' ? '/usr/share/maven' : tool('Docker-M3')}"
         JAVA_HOME = "${IS_DOCKERIZED == 'true' ? '/usr/lib/jvm/java-17-openjdk-amd64' : tool('Docker-JDK-17')}"
         PATH = "${JAVA_HOME}/bin:${MAVEN_HOME}/bin:${env.PATH}"
-
         DOCKER_BUILDKIT = "1"
         COMPOSE_DOCKER_CLI_BUILD = "1"
-        // Variables calculées dynamiquement
         BRANCH_NAME = "${env.BRANCH_NAME ?: 'unknown'}"
         BUILD_NUMBER = "${env.BUILD_NUMBER ?: '0'}"
         HTTP_PORT = "${getHTTPPort(env.BRANCH_NAME, CONFIG.ports)}"
@@ -64,17 +58,14 @@ pipeline {
         stage('Checkout & Setup') {
             steps {
                 script {
-                    // Checkout du code
-                    checkout scm
-
-                    // Vérification de Docker
-                    env.DOCKER_AVAILABLE = checkDockerAvailability()
-
-                    // Affichage de la configuration
-                    displayBuildInfo()
-
-                    // Vérification de l'environnement
-                    validateEnvironment()
+                    try {
+                        checkout scm
+                        env.DOCKER_AVAILABLE = checkDockerAvailability()
+                        displayBuildInfo()
+                        validateEnvironment()
+                    } catch (Exception e) {
+                        error "Initialization failed: ${e.getMessage()}"
+                    }
                 }
             }
         }
@@ -82,7 +73,11 @@ pipeline {
         stage('Install Dependencies') {
             steps {
                 script {
-                    installLocalDependencies()
+                    try {
+                        installLocalDependencies()
+                    } catch (Exception e) {
+                        error "Dependency installation failed: ${e.getMessage()}"
+                    }
                 }
             }
         }
@@ -90,13 +85,21 @@ pipeline {
         stage('Build & Test') {
             steps {
                 script {
-                    runMavenBuild()
+                    try {
+                        runMavenBuild()
+                    } catch (Exception e) {
+                        error "Maven build failed: ${e.getMessage()}"
+                    }
                 }
             }
             post {
                 always {
                     script {
-                        publishTestAndCoverageResults()
+                        try {
+                            publishTestAndCoverageResults()
+                        } catch (Exception e) {
+                            echo "Failed to publish results: ${e.getMessage()}"
+                        }
                     }
                 }
             }
@@ -112,7 +115,11 @@ pipeline {
             }
             steps {
                 script {
-                    performSonarAnalysis()
+                    try {
+                        performSonarAnalysis()
+                    } catch (Exception e) {
+                        error "SonarQube analysis failed: ${e.getMessage()}"
+                    }
                 }
             }
         }
@@ -127,7 +134,11 @@ pipeline {
             }
             steps {
                 script {
-                    checkQualityGate()
+                    try {
+                        checkQualityGate()
+                    } catch (Exception e) {
+                        error "Quality Gate check failed: ${e.getMessage()}"
+                    }
                 }
             }
         }
@@ -141,7 +152,12 @@ pipeline {
             }
             steps {
                 script {
-                    runMavenSecurityAudit()
+                    try {
+                        runMavenSecurityAudit()
+                    } catch (Exception e) {
+                        echo "Security audit failed: ${e.getMessage()}"
+                        currentBuild.result = 'UNSTABLE'
+                    }
                 }
             }
         }
@@ -160,7 +176,11 @@ pipeline {
                 stage('Docker Build') {
                     steps {
                         script {
-                            buildDockerImage()
+                            try {
+                                buildDockerImage()
+                            } catch (Exception e) {
+                                error "Docker build failed: ${e.getMessage()}"
+                            }
                         }
                     }
                 }
@@ -171,7 +191,11 @@ pipeline {
                     }
                     steps {
                         script {
-                            pushDockerImage()
+                            try {
+                                pushDockerImage()
+                            } catch (Exception e) {
+                                error "Docker push failed: ${e.getMessage()}"
+                            }
                         }
                     }
                 }
@@ -190,7 +214,11 @@ pipeline {
             }
             steps {
                 script {
-                    deployApplication()
+                    try {
+                        deployApplication()
+                    } catch (Exception e) {
+                        error "Deployment failed: ${e.getMessage()}"
+                    }
                 }
             }
         }
@@ -207,7 +235,11 @@ pipeline {
             }
             steps {
                 script {
-                    performHealthCheck()
+                    try {
+                        performHealthCheck()
+                    } catch (Exception e) {
+                        error "Health check failed: ${e.getMessage()}"
+                    }
                 }
             }
         }
@@ -216,36 +248,48 @@ pipeline {
     post {
         always {
             script {
-                postBuildActions()
+                try {
+                    postBuildActions()
+                } catch (Exception e) {
+                    echo "Post-build actions failed: ${e.getMessage()}"
+                }
             }
         }
         failure {
             script {
-                sendNotification("FAILURE")
+                try {
+                    sendNotification("FAILURE")
+                } catch (Exception e) {
+                    echo "Failed to send failure notification: ${e.getMessage()}"
+                }
             }
         }
         success {
             script {
-                sendNotification("SUCCESS")
+                try {
+                    sendNotification("SUCCESS")
+                } catch (Exception e) {
+                    echo "Failed to send success notification: ${e.getMessage()}"
+                }
             }
         }
         unstable {
             script {
-                sendNotification("UNSTABLE")
+                try {
+                    sendNotification("UNSTABLE")
+                } catch (Exception e) {
+                    echo "Failed to send unstable notification: ${e.getMessage()}"
+                }
             }
         }
     }
 }
 
-// =============================================================================
-// FONCTIONS UTILITAIRES
-// =============================================================================
-
+// Utility Functions
 def checkDockerAvailability() {
     try {
         def result = sh(
             script: '''
-                # Vérification avec retry
                 for i in 1 2 3; do
                     if command -v docker >/dev/null 2>&1; then
                         if timeout 10 docker info >/dev/null 2>&1; then
@@ -253,7 +297,7 @@ def checkDockerAvailability() {
                             exit 0
                         fi
                     fi
-                    echo "Tentative $i/3 échouée, retry dans 5s..."
+                    echo "Attempt $i/3 failed, retrying in 5s..."
                     sleep 5
                 done
                 echo "false"
@@ -262,18 +306,15 @@ def checkDockerAvailability() {
         ).trim()
 
         if (result == "true") {
-            echo "✅ Docker disponible et fonctionnel"
+            echo "✅ Docker available and functional"
             sh 'docker --version'
             sh 'docker info'
         } else {
-            echo "❌ Docker non disponible ou non fonctionnel"
-            echo "💡 Vérifiez que Docker est installé et que le daemon est démarré"
-            echo "💡 Vérifiez les permissions de l'utilisateur Jenkins"
+            echo "❌ Docker not available or not functional"
         }
-
         return result
     } catch (Exception e) {
-        echo "❌ Erreur lors de la vérification Docker: ${e.getMessage()}"
+        echo "❌ Docker check error: ${e.getMessage()}"
         return "false"
     }
 }
@@ -282,14 +323,14 @@ def displayBuildInfo() {
     def config = getConfig()
     echo """
     ╔══════════════════════════════════════════════════════════════════════════════╗
-    ║                            CONFIGURATION BUILD                               ║
+    ║                            BUILD CONFIGURATION                               ║
     ╠══════════════════════════════════════════════════════════════════════════════╣
     ║ 🏗️  Build #: ${env.BUILD_NUMBER}
     ║ 🌿 Branch: ${env.BRANCH_NAME}
     ║ ☕ Java: ${env.JAVA_HOME}
     ║ 📦 Maven: ${env.MAVEN_HOME}
-    ║ 🐳 Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Disponible" : "❌ Indisponible"}
-    ║ 🌍 Environnement: ${env.ENV_NAME}
+    ║ 🐳 Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Available" : "❌ Unavailable"}
+    ║ 🌍 Environment: ${env.ENV_NAME}
     ║ 🚪 Port: ${env.HTTP_PORT}
     ║ 🏷️  Tag: ${env.CONTAINER_TAG}
     ║ 📧 Email: ${config.emailRecipients}
@@ -298,59 +339,58 @@ def displayBuildInfo() {
 }
 
 def validateEnvironment() {
-    echo "Validation de l'environnement..."
-
-    // Vérification des outils requis
-    def requiredTools = ['mvn', 'java', 'git']
-    requiredTools.each { tool ->
-        try {
-            sh "which ${tool}"
-            echo "${tool} disponible"
-        } catch (Exception e) {
-            error "${tool} non trouvé dans le PATH"
+    echo "Validating environment..."
+    try {
+        def requiredTools = ['mvn', 'java', 'git']
+        requiredTools.each { tool ->
+            def toolPath = sh(script: "which ${tool} || echo 'not_found'", returnStdout: true).trim()
+            if (toolPath == 'not_found') {
+                error "${tool} not found in PATH"
+            } else {
+                echo "${tool} available at: ${toolPath}"
+            }
         }
-    }
 
-    // Vérification de l'espace disque
-    sh """
-        echo "=== ESPACE DISQUE ==="
-        df -h .
-    """
+        sh """
+            echo "=== DISK SPACE ==="
+            df -h .
+        """
+    } catch (Exception e) {
+        error "Environment validation failed: ${e.getMessage()}"
+    }
 }
 
 def installLocalDependencies() {
-    echo "📦 Installation des dépendances locales (libs/*.jar)..."
+    echo "📦 Installing local dependencies (libs/*.jar)..."
+    try {
+        sh '''
+            if [ ! -d "libs" ]; then
+                echo "libs directory not found"
+                exit 0
+            fi
 
-    sh '''
-        mvn install:install-file \
-            -Dfile=libs/gpsUtil.jar \
-            -DgroupId=gpsUtil \
-            -DartifactId=gpsUtil \
-            -Dversion=1.0.0 \
-            -Dpackaging=jar \
-            -Dmaven.repo.local=${WORKSPACE}/.m2/repository
+            for jar in libs/*.jar; do
+                if [ -f "$jar" ]; then
+                    jar_name=$(basename "$jar" .jar)
+                    echo "Installing $jar_name..."
 
-        mvn install:install-file \
-            -Dfile=libs/TripPricer.jar \
-            -DgroupId=tripPricer \
-            -DartifactId=tripPricer \
-            -Dversion=1.0.0 \
-            -Dpackaging=jar \
-            -Dmaven.repo.local=${WORKSPACE}/.m2/repository
-
-        mvn install:install-file \
-            -Dfile=libs/rewardCentral.jar \
-            -DgroupId=rewardCentral \
-            -DartifactId=rewardCentral \
-            -Dversion=1.0.0 \
-            -Dpackaging=jar \
-            -Dmaven.repo.local=${WORKSPACE}/.m2/repository
-    '''
+                    mvn install:install-file \
+                        -Dfile="$jar" \
+                        -DgroupId=custom.lib \
+                        -DartifactId="$jar_name" \
+                        -Dversion=1.0.0 \
+                        -Dpackaging=jar \
+                        -Dmaven.repo.local=${WORKSPACE}/.m2/repository
+                fi
+            done
+        '''
+    } catch (Exception e) {
+        error "Local dependency installation failed: ${e.getMessage()}"
+    }
 }
 
 def runMavenBuild() {
-    echo "Build et tests Maven..."
-
+    echo "Building and testing with Maven..."
     try {
         sh """
             mvn clean verify \
@@ -363,20 +403,18 @@ def runMavenBuild() {
                 -B -U
         """
     } catch (Exception e) {
-        echo "Erreur lors du build Maven: ${e.getMessage()}"
+        echo "Maven build error: ${e.getMessage()}"
         sh "mvn --version"
         sh "java -version"
-        error "Échec du build Maven"
+        error "Maven build failed"
     }
 }
 
 def publishTestAndCoverageResults() {
-    // Publication des résultats de tests
     if (fileExists('target/surefire-reports/TEST-*.xml')) {
         junit 'target/surefire-reports/TEST-*.xml'
     }
 
-    // Publication du rapport de couverture JaCoCo
     if (fileExists('target/site/jacoco/jacoco.xml')) {
         jacoco(
             execPattern: 'target/jacoco.exec',
@@ -386,7 +424,6 @@ def publishTestAndCoverageResults() {
         )
     }
 
-    // Archivage des rapports HTML
     if (fileExists('target/site/jacoco/index.html')) {
         publishHTML([
             allowMissing: false,
@@ -401,8 +438,7 @@ def publishTestAndCoverageResults() {
 
 def performSonarAnalysis() {
     def config = getConfig()
-    echo "Démarrage de l'analyse SonarQube..."
-
+    echo "Starting SonarQube analysis..."
     withSonarQubeEnv('SonarQube') {
         withCredentials([string(credentialsId: 'sonartoken', variable: 'SONAR_TOKEN')]) {
             def sonarCmd = """
@@ -426,21 +462,18 @@ def performSonarAnalysis() {
 
 def checkQualityGate() {
     def config = getConfig()
-    echo "Vérification du Quality Gate..."
-
+    echo "Checking Quality Gate..."
     timeout(time: config.timeouts.qualityGate, unit: 'MINUTES') {
         def qg = waitForQualityGate()
-
         if (qg.status != 'OK') {
             echo "Quality Gate: ${qg.status}"
             if (qg.conditions) {
                 qg.conditions.each { condition ->
-                    echo "  • ${condition.metricName}: ${condition.actualValue} (seuil: ${condition.errorThreshold})"
+                    echo "  • ${condition.metricName}: ${condition.actualValue} (threshold: ${condition.errorThreshold})"
                 }
             }
-
             if (env.BRANCH_NAME == 'master') {
-                error "Quality Gate échoué sur master"
+                error "Quality Gate failed on master"
             } else {
                 currentBuild.result = 'UNSTABLE'
             }
@@ -452,8 +485,7 @@ def checkQualityGate() {
 
 def runMavenSecurityAudit() {
     def config = getConfig()
-    echo "Audit de sécurité Maven..."
-
+    echo "Running Maven security audit..."
     timeout(time: config.timeouts.securityAudit, unit: 'MINUTES') {
         sh """
             mvn versions:display-dependency-updates \
@@ -471,21 +503,19 @@ def runMavenSecurityAudit() {
 def buildDockerImage() {
     def config = getConfig()
     if (env.DOCKER_AVAILABLE != "true") {
-        echo "Docker non disponible, skip de l'étape de build"
+        echo "Docker not available, skipping build"
         return
     }
 
-    // Trouver le fichier JAR
     def jarFile = findFiles(glob: 'target/*.jar').find {
         it.name.endsWith('.jar') && !it.name.contains('sources') && !it.name.contains('javadoc')
     }?.path
 
     if (!jarFile) {
-        error "Aucun fichier JAR exécutable trouvé dans target/"
+        error "No executable JAR file found in target/"
     }
 
-    echo "Construction de l'image Docker avec ${jarFile}..."
-
+    echo "Building Docker image with ${jarFile}..."
     try {
         sh """
             docker build \
@@ -495,17 +525,16 @@ def buildDockerImage() {
                 -t "${config.containerName}:${env.CONTAINER_TAG}" \
                 .
         """
-
-        echo "Image Docker construite avec succès"
+        echo "Docker image built successfully"
     } catch (Exception e) {
-        error "Échec de la construction Docker: ${e.getMessage()}"
+        error "Docker build failed: ${e.getMessage()}"
     }
 }
 
 def pushDockerImage() {
     def config = getConfig()
     if (env.DOCKER_AVAILABLE != "true" || !config.dockerRegistry) {
-        echo "Docker non disponible ou aucun registry configuré, skip du push"
+        echo "Docker not available or no registry configured, skipping push"
         return
     }
 
@@ -515,18 +544,17 @@ def pushDockerImage() {
         passwordVariable: 'DOCKER_PASSWORD'
     )]) {
         try {
-            echo "Connexion au registre Docker..."
+            echo "Logging into Docker registry..."
             sh """
                 echo "\${DOCKER_PASSWORD}" | docker login -u "\${DOCKER_USER}" --password-stdin ${config.dockerRegistry}
             """
 
-            echo "Tagging et push de l'image..."
+            echo "Tagging and pushing image..."
             sh """
                 docker tag "${config.containerName}:${env.CONTAINER_TAG}" "\${DOCKER_USER}/${config.containerName}:${env.CONTAINER_TAG}"
                 docker push "\${DOCKER_USER}/${config.containerName}:${env.CONTAINER_TAG}"
             """
 
-            // Pour master, on push aussi le tag latest
             if (env.BRANCH_NAME == 'master') {
                 sh """
                     docker tag "${config.containerName}:${env.CONTAINER_TAG}" "\${DOCKER_USER}/${config.containerName}:latest"
@@ -534,12 +562,11 @@ def pushDockerImage() {
                 """
             }
 
-            echo "Déconnexion du registre..."
+            echo "Logging out from registry..."
             sh "docker logout ${config.dockerRegistry}"
-
-            echo "Image poussée avec succès"
+            echo "Image pushed successfully"
         } catch (Exception e) {
-            error "Échec du push Docker: ${e.getMessage()}"
+            error "Docker push failed: ${e.getMessage()}"
         }
     }
 }
@@ -547,7 +574,7 @@ def pushDockerImage() {
 def deployApplication() {
     def config = getConfig()
     if (env.DOCKER_AVAILABLE != "true") {
-        echo "Docker non disponible, skip du déploiement"
+        echo "Docker not available, skipping deployment"
         return
     }
 
@@ -557,14 +584,12 @@ def deployApplication() {
             usernameVariable: 'DOCKER_USER',
             passwordVariable: 'DOCKER_PASSWORD'
         )]) {
-
-            echo "Arrêt du conteneur existant..."
+            echo "Stopping existing container..."
             sh """
-                docker stop ${config.containerName} 2>/dev/null || echo "Aucun conteneur à arrêter"
-                docker rm ${config.containerName} 2>/dev/null || echo "Aucun conteneur à supprimer"
+                docker stop ${config.containerName} 2>/dev/null || echo "No container to stop"
+                docker rm ${config.containerName} 2>/dev/null || echo "No container to remove"
             """
 
-            // Démarrage du nouveau conteneur
             def imageName = config.dockerRegistry ?
                 "\${DOCKER_USER}/${config.containerName}:${env.CONTAINER_TAG}" :
                 "${config.containerName}:${env.CONTAINER_TAG}"
@@ -577,24 +602,22 @@ def deployApplication() {
                     --restart unless-stopped \
                     ${imageName}
             """
-
-            echo "Application déployée avec succès sur le port ${env.HTTP_PORT}"
+            echo "Application deployed successfully on port ${env.HTTP_PORT}"
         }
     } catch (Exception e) {
-        error "Échec du déploiement: ${e.getMessage()}"
+        error "Deployment failed: ${e.getMessage()}"
     }
 }
 
 def performHealthCheck() {
     def config = getConfig()
     if (env.DOCKER_AVAILABLE != "true") {
-        echo "Docker non disponible, skip du health check"
+        echo "Docker not available, skipping health check"
         return
     }
 
     try {
-        echo "Vérification de la santé de l'application..."
-
+        echo "Checking application health..."
         timeout(time: config.timeouts.deployment, unit: 'MINUTES') {
             waitUntil {
                 def health = sh(
@@ -603,33 +626,29 @@ def performHealthCheck() {
                 )
 
                 if (health == 0) {
-                    echo "Application en bonne santé"
+                    echo "Application healthy"
                     return true
                 } else {
-                    echo "En attente du démarrage de l'application..."
+                    echo "Waiting for application to start..."
                     sleep(10)
                     return false
                 }
             }
         }
     } catch (Exception e) {
-        error "Health check échoué: ${e.getMessage()}"
+        error "Health check failed: ${e.getMessage()}"
     }
 }
 
 def postBuildActions() {
     def config = getConfig()
-    // Archivage des artefacts
     archiveArtifacts artifacts: 'target/*.jar', fingerprint: true, allowEmptyArchive: true
 
-    // Nettoyage Docker
     if (env.DOCKER_AVAILABLE == "true") {
         sh """
             docker system prune -f 2>/dev/null || true
         """
     }
-
-    // Nettoyage du workspace
     cleanWs()
 }
 
@@ -637,20 +656,20 @@ def sendNotification(status) {
     def config = getConfig()
     def subject = "[Jenkins] ${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - ${status}"
     def body = """
-        Résultat du build: ${status}
+        Build result: ${status}
 
-        Détails:
-        - Projet: ${env.JOB_NAME}
+        Details:
+        - Project: ${env.JOB_NAME}
         - Build: #${env.BUILD_NUMBER}
-        - Branche: ${env.BRANCH_NAME ?: 'N/A'}
-        - Environnement: ${env.ENV_NAME}
+        - Branch: ${env.BRANCH_NAME ?: 'N/A'}
+        - Environment: ${env.ENV_NAME}
         - Port: ${env.HTTP_PORT}
 
-        Liens:
+        Links:
         - Console: ${env.BUILD_URL}console
-        - Artefacts: ${env.BUILD_URL}artifact/
+        - Artifacts: ${env.BUILD_URL}artifact/
 
-        ${status == 'SUCCESS' ? 'Build réussi!' : 'Veuillez vérifier les logs pour plus de détails.'}
+        ${status == 'SUCCESS' ? 'Build successful!' : 'Please check logs for details.'}
     """
 
     mail(
@@ -660,15 +679,15 @@ def sendNotification(status) {
     )
 }
 
-// Fonctions utilitaires pour la configuration
+// Configuration utility functions
 String getEnvName(String branchName, Map environments) {
-    def branch = branchName?.toLowerCase()
-    return environments[branch] ?: environments.default
+    def branch = branchName?.toLowerCase() ?: 'default'
+    return environments.get(branch, environments.default)
 }
 
 String getHTTPPort(String branchName, Map ports) {
-    def branch = branchName?.toLowerCase()
-    return ports[branch] ?: ports.default
+    def branch = branchName?.toLowerCase() ?: 'default'
+    return ports.get(branch, ports.default)
 }
 
 String getTag(String buildNumber, String branchName) {
