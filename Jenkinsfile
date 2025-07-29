@@ -1,12 +1,28 @@
-// Configuration centralisée avec détection d'environnement
+// Configuration centralisée
 def config = [
     emailRecipients: "magassakara@gmail.com",
     containerName: "tourguide-app",
     dockerRegistry: "docker.io",
-    sonarProjectKey: "Tourguide",
+    dockerHome: '/usr/local/bin',
+    sonarProjectKey: "tourguide",
+    // Configuration SonarQube
+    sonar: [
+        // Détection automatique de l'édition SonarQube
+        communityEdition: true, // Changez à false si vous avez Developer Edition+
+        projectKey: "tourguide",
+        qualityProfileJava: "Sonar way", // Profile de qualité par défaut
+        exclusions: [
+            "**/target/**",
+            "**/*.min.js",
+            "**/node_modules/**",
+            "**/.mvn/**"
+        ]
+    ],
     timeouts: [
         qualityGate: 2,
-        deployment: 5
+        deployment: 5,
+        sonarAnalysis: 10,
+        securityAudit: 10  // Timeout pour l'audit Maven seulement
     ],
     ports: [
         master: '9003',
@@ -17,23 +33,6 @@ def config = [
         master: 'prod',
         develop: 'uat',
         default: 'dev'
-    ],
-    // Configuration spécifique par environnement Jenkins
-    jenkins: [
-        local: [
-            dockerHost: "unix:///var/run/docker.sock",
-            dockerNetwork: "host",
-            mavenTool: "M3",
-            jdkTool: "JDK-21",
-            sonarUrl: "http://localhost:9000"
-        ],
-        docker: [
-            dockerHost: "unix:///var/run/docker.sock",
-            dockerNetwork: "jenkins-network",
-            mavenTool: "Docker-M3",
-            jdkTool: "Docker-JDK-17",
-            sonarUrl: "http://sonarqube:9000"
-        ]
     ]
 ]
 
@@ -41,14 +40,17 @@ pipeline {
     agent any
 
     options {
-        timeout(time: 30, unit: 'MINUTES')
+        timeout(time: 45, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '10'))
         skipDefaultCheckout(true)
         timestamps()
+        parallelsAlwaysFailFast()
     }
 
-    // Les tools seront configurés dynamiquement dans le pipeline
-    // tools {} - Supprimé car Jenkins n'accepte pas une section vide
+    tools {
+        maven 'M3'
+        jdk 'JDK-21'
+    }
 
     environment {
         DOCKER_BUILDKIT = "1"
@@ -59,65 +61,59 @@ pipeline {
         HTTP_PORT = "${getHTTPPort(env.BRANCH_NAME, config.ports)}"
         ENV_NAME = "${getEnvName(env.BRANCH_NAME, config.environments)}"
         CONTAINER_TAG = "${getTag(env.BUILD_NUMBER, env.BRANCH_NAME)}"
+        // Variables SonarQube
+        SONAR_PROJECT_KEY = "${getSonarProjectKey(env.BRANCH_NAME, config.sonar)}"
+        MAVEN_OPTS = "-Dmaven.repo.local=${WORKSPACE}/.m2/repository -Xmx1024m"
     }
 
     stages {
-        stage('Environment Detection & Setup') {
+        stage('Checkout & Setup') {
             steps {
                 script {
-                    // Détection de l'environnement Jenkins
-                    env.JENKINS_ENV = detectJenkinsEnvironment()
-                    def jenkinsConfig = config.jenkins[env.JENKINS_ENV]
-
-                    // Configuration dynamique des outils selon l'environnement
-                    configureTools(jenkinsConfig)
-
                     // Checkout du code
                     checkout scm
 
-                    // Configuration de Docker selon l'environnement
-                    configureDockerEnvironment(env.JENKINS_ENV, config)
+                    // Validation de l'environnement
+                    validateEnvironment()
 
                     // Vérification de Docker avec retry
                     env.DOCKER_AVAILABLE = checkDockerAvailability()
 
                     // Affichage de la configuration
-                    displayBuildInfo(config, env.JENKINS_ENV)
+                    displayBuildInfo(config)
                 }
             }
         }
 
-        stage('Dependencies Setup') {
+        stage('Install Local Dependencies') {
             steps {
                 script {
-                    echo "📦 Vérification et préparation des dépendances..."
+                    echo "📦 Installation des dépendances locales (libs/*.jar)..."
+                    sh '''
+                        mvn install:install-file \
+                            -Dfile=libs/gpsUtil.jar \
+                            -DgroupId=gpsUtil \
+                            -DartifactId=gpsUtil \
+                            -Dversion=1.0.0 \
+                            -Dpackaging=jar \
+                            -Dmaven.repo.local=${WORKSPACE}/.m2/repository
 
-                    // Vérifier la structure du projet
-                    sh """
-                        echo "📋 Structure du projet:"
-                        ls -la
+                        mvn install:install-file \
+                            -Dfile=libs/TripPricer.jar \
+                            -DgroupId=tripPricer \
+                            -DartifactId=tripPricer \
+                            -Dversion=1.0.0 \
+                            -Dpackaging=jar \
+                            -Dmaven.repo.local=${WORKSPACE}/.m2/repository
 
-                        echo "📄 Contenu du pom.xml (dépendances):"
-                        grep -A 10 -B 2 "gpsUtil\\|tripPricer\\|rewardCentral" pom.xml || echo "Aucune dépendance externe trouvée dans pom.xml"
-
-                        # Créer le dossier .m2 local si nécessaire
-                        mkdir -p \${WORKSPACE}/.m2/repository
-
-                        # Afficher la configuration Maven
-                        echo "📍 Repository Maven local: \${WORKSPACE}/.m2/repository"
-                    """
-
-                    // Vérifier si les JARs de dépendances sont disponibles
-                    if (fileExists('libs')) {
-                        echo "✅ Dossier libs détecté"
-                        sh "ls -la libs/"
-                    } else {
-                        echo "⚠️ Aucun dossier libs trouvé"
-                        echo "💡 Suggestion: Créez un dossier 'libs' avec vos JARs de dépendances:"
-                        echo "   - libs/gpsUtil-1.0.0.jar"
-                        echo "   - libs/tripPricer-1.0.0.jar"
-                        echo "   - libs/rewardCentral-1.0.0.jar"
-                    }
+                        mvn install:install-file \
+                            -Dfile=libs/rewardCentral.jar \
+                            -DgroupId=rewardCentral \
+                            -DartifactId=rewardCentral \
+                            -Dversion=1.0.0 \
+                            -Dpackaging=jar \
+                            -Dmaven.repo.local=${WORKSPACE}/.m2/repository
+                    '''
                 }
             }
         }
@@ -125,113 +121,23 @@ pipeline {
         stage('Build & Test') {
             steps {
                 script {
-                    def jenkinsConfig = config.jenkins[env.JENKINS_ENV]
+                    echo "Build et tests Maven..."
 
-                    // Configuration des outils pour ce stage
-                    withTools(jenkinsConfig) {
-                        sh """
-                            echo "🔧 Configuration Maven et JDK:"
-                            echo "JAVA_HOME: \${JAVA_HOME}"
-                            echo "PATH: \${PATH}"
-                            java -version
-                            mvn -version
-
-                            echo "📦 Installation des dépendances locales..."
-                            # Vérification de l'existence des JAR de dépendances
-                            if [ -d "libs" ]; then
-                                echo "✅ Dossier libs trouvé"
-                                ls -la libs/
-
-                                # Installation des dépendances locales si elles existent
-                                if [ -f "libs/gpsUtil-1.0.0.jar" ]; then
-                                    echo "📦 Installation de gpsUtil..."
-                                    mvn install:install-file \
-                                        -Dfile=libs/gpsUtil-1.0.0.jar \
-                                        -DgroupId=gpsUtil \
-                                        -DartifactId=gpsUtil \
-                                        -Dversion=1.0.0 \
-                                        -Dpackaging=jar \
-                                        -Dmaven.repo.local=\${WORKSPACE}/.m2/repository
-                                fi
-
-                                if [ -f "libs/tripPricer-1.0.0.jar" ]; then
-                                    echo "📦 Installation de tripPricer..."
-                                    mvn install:install-file \
-                                        -Dfile=libs/tripPricer-1.0.0.jar \
-                                        -DgroupId=tripPricer \
-                                        -DartifactId=tripPricer \
-                                        -Dversion=1.0.0 \
-                                        -Dpackaging=jar \
-                                        -Dmaven.repo.local=\${WORKSPACE}/.m2/repository
-                                fi
-
-                                if [ -f "libs/rewardCentral-1.0.0.jar" ]; then
-                                    echo "📦 Installation de rewardCentral..."
-                                    mvn install:install-file \
-                                        -Dfile=libs/rewardCentral-1.0.0.jar \
-                                        -DgroupId=rewardCentral \
-                                        -DartifactId=rewardCentral \
-                                        -Dversion=1.0.0 \
-                                        -Dpackaging=jar \
-                                        -Dmaven.repo.local=\${WORKSPACE}/.m2/repository
-                                fi
-                            else
-                                echo "⚠️ Dossier libs non trouvé, tentative de compilation sans installation..."
-                            fi
-
-                            echo "🏗️ Compilation et tests..."
-
-                            # Tentative 1: Build normal
-                            if mvn clean verify \
-                                org.jacoco:jacoco-maven-plugin:prepare-agent \
-                                -DskipTests=false \
-                                -Dmaven.test.failure.ignore=false \
-                                -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \
-                                -B -U; then
-                                echo "✅ Build réussi avec les dépendances"
-                            else
-                                echo "⚠️ Build échoué, tentative avec skip des tests..."
-                                # Tentative 2: Compilation sans tests si dépendances manquantes
-                                mvn clean compile \
-                                    -DskipTests=true \
-                                    -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \
-                                    -B -U
-
-                                echo "📝 Note: Tests ignorés à cause des dépendances manquantes"
-                                env.TESTS_SKIPPED = "true"
-                            fi
-                        """
-                    }
+                    sh """
+                        mvn clean verify \
+                            org.jacoco:jacoco-maven-plugin:prepare-agent \
+                            -DskipTests=false \
+                            -Dmaven.test.failure.ignore=false \
+                            -Djacoco.destFile=target/jacoco.exec \
+                            -Djacoco.dataFile=target/jacoco.exec \
+                            -B -U -q
+                    """
                 }
             }
             post {
                 always {
                     script {
-                        // Publication des résultats de tests seulement si les tests ont été exécutés
-                        if (env.TESTS_SKIPPED != "true") {
-                            if (fileExists('target/surefire-reports/TEST-*.xml')) {
-                                junit 'target/surefire-reports/TEST-*.xml'
-                                echo "✅ Résultats des tests publiés"
-                            } else {
-                                echo "⚠️ Aucun rapport de test trouvé"
-                            }
-
-                            // Archivage des rapports de couverture
-                            if (fileExists('target/site/jacoco/index.html')) {
-                                archiveArtifacts artifacts: 'target/site/jacoco/**', allowEmptyArchive: true
-                                echo "✅ Rapport de couverture archivé dans les artefacts"
-                            }
-                        } else {
-                            echo "⚠️ Tests ignorés - pas de publication des résultats"
-                        }
-
-                        // Vérifier si le JAR a été créé malgré tout
-                        if (fileExists('target/*.jar')) {
-                            echo "✅ JAR créé avec succès"
-                            sh "ls -la target/*.jar"
-                        } else {
-                            echo "❌ Aucun JAR trouvé"
-                        }
+                        publishTestAndCoverageResults()
                     }
                 }
             }
@@ -247,23 +153,15 @@ pipeline {
             }
             steps {
                 script {
-                    def jenkinsConfig = config.jenkins[env.JENKINS_ENV]
-
-                    withSonarQubeEnv('SonarQube') {
-                        withCredentials([string(credentialsId: 'sonartoken', variable: 'SONAR_TOKEN')]) {
-                            withTools(jenkinsConfig) {
-                                sh """
-                                    echo "🔍 Analyse SonarQube avec ${jenkinsConfig.sonarUrl}..."
-                                    mvn sonar:sonar \
-                                        -Dsonar.projectKey=${config.sonarProjectKey} \
-                                        -Dsonar.host.url=${jenkinsConfig.sonarUrl} \
-                                        -Dsonar.token=\${SONAR_TOKEN} \
-                                        -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
-                                        -Dsonar.java.binaries=target/classes \
-                                        -Dsonar.branch.name=${env.BRANCH_NAME} \
-                                        -B
-                                """
-                            }
+                    performSonarAnalysis(config)
+                }
+            }
+            post {
+                always {
+                    script {
+                        // Archivage des rapports SonarQube si disponibles
+                        if (fileExists('.scannerwork/report-task.txt')) {
+                            archiveArtifacts artifacts: '.scannerwork/report-task.txt', allowEmptyArchive: true
                         }
                     }
                 }
@@ -272,39 +170,78 @@ pipeline {
 
         stage('Quality Gate') {
             when {
-                anyOf {
-                    branch 'master'
-                    branch 'develop'
-                    changeRequest()
+                allOf {
+                    anyOf {
+                        branch 'master'
+                        branch 'develop'
+                        changeRequest()
+                    }
+                    // Seulement si SonarQube a réussi
+                    expression {
+                        return fileExists('.scannerwork/report-task.txt')
+                    }
                 }
             }
             steps {
-                timeout(time: config.timeouts.qualityGate, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
+                script {
+                    checkQualityGate(config)
                 }
             }
         }
 
-        stage('Docker Build') {
+        stage('Security Audit') {
             when {
                 anyOf {
                     branch 'master'
                     branch 'develop'
                 }
             }
+            options {
+                timeout(time: 10, unit: 'MINUTES')
+            }
             steps {
                 script {
-                    validateDockerPrerequisites()
-                    buildDockerImage(config, env.JENKINS_ENV)
+                    runMavenSecurityAudit()
+                }
+            }
+        }
+
+        stage('Docker Operations') {
+            when {
+                allOf {
+                    anyOf {
+                        branch 'master'
+                        branch 'develop'
+                    }
+                    // S'assurer que Docker est disponible
+                    expression {
+                        return env.DOCKER_AVAILABLE == "true"
+                    }
+                }
+            }
+            parallel {
+                stage('Docker Build') {
+                    steps {
+                        script {
+                            validateDockerPrerequisites()
+                            buildDockerImage(config)
+                        }
+                    }
                 }
             }
         }
 
         stage('Docker Push') {
             when {
-                anyOf {
-                    branch 'master'
-                    branch 'develop'
+                allOf {
+                    anyOf {
+                        branch 'master'
+                        branch 'develop'
+                    }
+                    // Docker doit être disponible ET l'image construite
+                    expression {
+                        return env.DOCKER_AVAILABLE == "true"
+                    }
                 }
             }
             steps {
@@ -316,28 +253,40 @@ pipeline {
 
         stage('Deploy') {
             when {
-                anyOf {
-                    branch 'master'
-                    branch 'develop'
+                allOf {
+                    anyOf {
+                        branch 'master'
+                        branch 'develop'
+                    }
+                    // Docker doit être disponible
+                    expression {
+                        return env.DOCKER_AVAILABLE == "true"
+                    }
                 }
             }
             steps {
                 script {
-                    deployApplication(config, env.JENKINS_ENV)
+                    deployApplication(config)
                 }
             }
         }
 
         stage('Health Check') {
             when {
-                anyOf {
-                    branch 'master'
-                    branch 'develop'
+                allOf {
+                    anyOf {
+                        branch 'master'
+                        branch 'develop'
+                    }
+                    // Docker doit être disponible
+                    expression {
+                        return env.DOCKER_AVAILABLE == "true"
+                    }
                 }
             }
             steps {
                 script {
-                    performHealthCheck(config, env.JENKINS_ENV)
+                    performHealthCheck(config)
                 }
             }
         }
@@ -346,184 +295,297 @@ pipeline {
     post {
         always {
             script {
-                // Nettoyage des images Docker locales
-                cleanupDockerImages(config)
+                try {
+                    // Archivage des artefacts (même sans Docker)
+                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true, allowEmptyArchive: true
 
-                // Archivage des artefacts
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true, allowEmptyArchive: true
+                    // Nettoyage des images Docker locales (seulement si Docker disponible)
+                    if (env.DOCKER_AVAILABLE == "true") {
+                        cleanupDockerImages(config)
+                    }
 
-                // Nettoyage du workspace
-                cleanWs()
-
-                // Envoi de notification
-                sendNotification(config.emailRecipients, env.JENKINS_ENV)
+                    // Envoi de notification
+                    sendNotification(config.emailRecipients)
+                } catch (Exception e) {
+                    echo "Erreur dans post always: ${e.getMessage()}"
+                } finally {
+                    // Nettoyage du workspace
+                    cleanWs()
+                }
             }
         }
         failure {
             script {
-                echo "❌ Pipeline échoué - Vérifiez les logs ci-dessus"
+                try {
+                    echo "Pipeline échoué - Vérifiez les logs ci-dessus"
+                    // Collecte d'informations de diagnostic
+                    collectDiagnosticInfo()
+                } catch (Exception e) {
+                    echo "Erreur lors de la collecte de diagnostic: ${e.getMessage()}"
+                }
             }
         }
         success {
             script {
-                echo "✅ Pipeline réussi - Application déployée avec succès"
+                if (env.DOCKER_AVAILABLE == "true") {
+                    echo "Pipeline réussi - Application déployée avec succès"
+                } else {
+                    echo "Pipeline réussi - Build Maven terminé (Docker indisponible)"
+                }
             }
         }
         unstable {
             script {
-                echo "⚠️ Pipeline instable - Vérifiez les avertissements"
+                echo "Pipeline instable - Vérifiez les avertissements"
             }
         }
     }
 }
 
 // =============================================================================
-// FONCTIONS DE CONFIGURATION DES OUTILS
+// FONCTIONS UTILITAIRES AMÉLIORÉES
 // =============================================================================
 
-def configureTools(jenkinsConfig) {
-    try {
-        echo "🔧 Configuration des outils pour Jenkins ${env.JENKINS_ENV}:"
-        echo "   - Maven: ${jenkinsConfig.mavenTool}"
-        echo "   - JDK: ${jenkinsConfig.jdkTool}"
+def validateEnvironment() {
+    echo "Validation de l'environnement..."
 
-        // Vérifier que les outils existent
-        def availableTools = tool.getDescriptor().getInstallations()
-        echo "📋 Outils disponibles dans Jenkins:"
-        availableTools.each { toolInstall ->
-            echo "   - ${toolInstall.name} (${toolInstall.class.simpleName})"
-        }
-
-    } catch (Exception e) {
-        echo "⚠️ Erreur lors de la configuration des outils: ${e.getMessage()}"
-    }
-}
-
-def withTools(jenkinsConfig, Closure body) {
-    // Utilisation dynamique des outils selon l'environnement
-    def mavenTool = tool name: jenkinsConfig.mavenTool, type: 'maven'
-    def jdkTool = tool name: jenkinsConfig.jdkTool, type: 'jdk'
-
-    withEnv([
-        "JAVA_HOME=${jdkTool}",
-        "MAVEN_HOME=${mavenTool}",
-        "PATH+MAVEN=${mavenTool}/bin",
-        "PATH+JAVA=${jdkTool}/bin"
-    ]) {
-        body()
-    }
-}
-
-// =============================================================================
-// FONCTIONS DE DÉTECTION ET CONFIGURATION D'ENVIRONNEMENT
-// =============================================================================
-
-def detectJenkinsEnvironment() {
-    try {
-        // Méthode 1: Vérifier si nous sommes dans un conteneur Docker
-        if (fileExists('/.dockerenv')) {
-            echo "🐳 Détection: Jenkins dans Docker (/.dockerenv trouvé)"
-            return 'docker'
-        }
-
-        // Méthode 2: Vérifier la présence de variables d'environnement Docker
-        def hostname = sh(script: 'hostname', returnStdout: true).trim()
-        if (hostname.contains('docker') || hostname.length() == 12) {
-            echo "🐳 Détection: Jenkins dans Docker (hostname: ${hostname})"
-            return 'docker'
-        }
-
-        // Méthode 3: Vérifier si Jenkins_HOME contient 'docker'
-        if (env.JENKINS_HOME?.contains('docker')) {
-            echo "🐳 Détection: Jenkins dans Docker (JENKINS_HOME)"
-            return 'docker'
-        }
-
-        // Méthode 4: Vérifier les processus Docker
-        def dockerProcesses = sh(
-            script: 'ps aux | grep -c "[d]ocker" || true',
-            returnStdout: true
-        ).trim().toInteger()
-
-        if (dockerProcesses > 0) {
-            echo "🐳 Détection: Jenkins dans Docker (processus Docker détectés: ${dockerProcesses})"
-            return 'docker'
-        }
-
-        // Méthode 5: Vérifier l'existence d'outils spécifiques Docker
+    // Vérification des outils requis
+    def requiredTools = ['mvn', 'java', 'git']
+    requiredTools.each { tool ->
         try {
-            def dockerM3Exists = sh(
-                script: 'ls /opt/maven 2>/dev/null || echo "not-found"',
-                returnStdout: true
-            ).trim()
-
-            if (dockerM3Exists != "not-found") {
-                echo "🐳 Détection: Jenkins dans Docker (Maven Docker trouvé)"
-                return 'docker'
-            }
+            sh "which ${tool}"
+            echo "${tool} disponible"
         } catch (Exception e) {
-            // Ignorer l'erreur
+            error "${tool} non trouvé dans le PATH"
         }
+    }
 
-        // Par défaut, considérer comme local
-        echo "🖥️ Détection: Jenkins local"
-        return 'local'
+    // Vérification de l'espace disque
+    sh """
+        df -h . | tail -1 | awk '{print "Espace disque disponible: " \$4 " (" \$5 " utilisé)"}'
+    """
+}
 
-    } catch (Exception e) {
-        echo "⚠️ Erreur de détection, utilisation par défaut: local (${e.getMessage()})"
-        return 'local'
+def performSonarAnalysis(config) {
+    echo "Démarrage de l'analyse SonarQube..."
+
+    withSonarQubeEnv('SonarQube') {
+        withCredentials([string(credentialsId: 'sonartoken', variable: 'SONAR_TOKEN')]) {
+            try {
+                // Construction de la commande SonarQube adaptée à l'édition
+                def sonarCommand = buildSonarCommand(config)
+
+                echo "Commande SonarQube: ${sonarCommand}"
+
+                timeout(time: config.timeouts.sonarAnalysis, unit: 'MINUTES') {
+                    sh sonarCommand
+                }
+
+                echo "Analyse SonarQube terminée avec succès"
+
+            } catch (Exception e) {
+                echo "Erreur lors de l'analyse SonarQube: ${e.getMessage()}"
+
+                // Si l'erreur concerne les branches, on continue avec une analyse simple
+                if (e.getMessage().contains("sonar.branch.name")) {
+                    echo "Fonctionnalité multi-branches non supportée, analyse simple en cours..."
+                    def fallbackCommand = buildFallbackSonarCommand(config)
+                    sh fallbackCommand
+                    echo "Analyse SonarQube simple terminée"
+                } else {
+                    throw e
+                }
+            }
+        }
     }
 }
 
-def configureDockerEnvironment(jenkinsEnv, config) {
-    def jenkinsConfig = config.jenkins[jenkinsEnv]
+def buildSonarCommand(config) {
+    def baseCommand = """
+        mvn sonar:sonar \
+            -Dsonar.projectKey=${env.SONAR_PROJECT_KEY} \
+            -Dsonar.host.url=\$SONAR_HOST_URL \
+            -Dsonar.token=\${SONAR_TOKEN} \
+            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+            -Dsonar.java.binaries=target/classes \
+            -Dsonar.exclusions="${config.sonar.exclusions.join(',')}" \
+            -Dsonar.java.source=21 \
+            -Dsonar.java.target=21 \
+            -B -q
+    """
+
+    // Ajout des paramètres spécifiques selon l'édition
+    if (!config.sonar.communityEdition && env.BRANCH_NAME) {
+        baseCommand += " -Dsonar.branch.name=${env.BRANCH_NAME}"
+
+        // Paramètres additionnels pour Developer Edition+
+        if (env.BRANCH_NAME != 'master') {
+            baseCommand += " -Dsonar.branch.target=master"
+        }
+    }
+
+    return baseCommand
+}
+
+def buildFallbackSonarCommand(config) {
+    return """
+        mvn sonar:sonar \
+            -Dsonar.projectKey=${config.sonar.projectKey} \
+            -Dsonar.host.url=\$SONAR_HOST_URL \
+            -Dsonar.token=\${SONAR_TOKEN} \
+            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+            -Dsonar.java.binaries=target/classes \
+            -Dsonar.exclusions="${config.sonar.exclusions.join(',')}" \
+            -Dsonar.java.source=21 \
+            -Dsonar.java.target=21 \
+            -B -q
+    """
+}
+
+def checkQualityGate(config) {
+    echo "Vérification du Quality Gate..."
 
     try {
-        if (jenkinsEnv == 'docker') {
-            // Configuration spécifique pour Jenkins dans Docker
+        timeout(time: config.timeouts.qualityGate, unit: 'MINUTES') {
+            def qg = waitForQualityGate()
+
+            if (qg.status != 'OK') {
+                echo "Quality Gate: ${qg.status}"
+
+                // Affichage des détails si disponibles
+                if (qg.conditions) {
+                    echo "Détails des conditions:"
+                    qg.conditions.each { condition ->
+                        echo "  • ${condition.metricName}: ${condition.actualValue} (seuil: ${condition.errorThreshold})"
+                    }
+                }
+
+                // En fonction de la branche, on peut être plus ou moins strict
+                if (env.BRANCH_NAME == 'master') {
+                    error "Quality Gate échoué sur la branche master - Arrêt du pipeline"
+                } else {
+                    echo "Quality Gate échoué mais pipeline continue (branche de développement)"
+                    currentBuild.result = 'UNSTABLE'
+                }
+            } else {
+                echo "Quality Gate: PASSED"
+            }
+        }
+    } catch (Exception e) {
+        echo "Impossible de vérifier le Quality Gate: ${e.getMessage()}"
+        if (env.BRANCH_NAME == 'master') {
+            error "Vérification Quality Gate obligatoire sur master"
+        } else {
+            echo "Continuing sans Quality Gate sur branche de développement"
+            currentBuild.result = 'UNSTABLE'
+        }
+    }
+}
+
+def runMavenSecurityAudit() {
+    try {
+        echo "Audit de sécurité Maven..."
+
+        timeout(time: 8, unit: 'MINUTES') {
             sh """
-                echo "🐳 Configuration Jenkins Docker:"
-                # Vérifier l'accès au socket Docker
-                if [ -S /var/run/docker.sock ]; then
-                    echo "✅ Socket Docker accessible"
-                    ls -la /var/run/docker.sock
-                else
-                    echo "❌ Socket Docker non accessible"
-                fi
+                mvn versions:display-dependency-updates \
+                    -DprocessDependencyManagement=false \
+                    -DgenerateBackupPoms=false \
+                    -B -q
+            """
 
-                # Vérifier les outils Maven et JDK
-                echo "📋 Vérification des outils:"
-                if [ -d "/opt/maven" ]; then
-                    echo "✅ Maven Docker trouvé: /opt/maven"
-                    ls -la /opt/maven/bin/mvn 2>/dev/null || echo "❌ Binaire mvn non trouvé"
-                else
-                    echo "❌ Maven Docker non trouvé"
-                fi
+            sh """
+                mvn versions:display-plugin-updates \
+                    -DgenerateBackupPoms=false \
+                    -B -q
+            """
+        }
 
-                if [ -d "/opt/java/openjdk" ]; then
-                    echo "✅ JDK Docker trouvé: /opt/java/openjdk"
-                    ls -la /opt/java/openjdk/bin/java 2>/dev/null || echo "❌ Binaire java non trouvé"
-                else
-                    echo "❌ JDK Docker non trouvé"
-                fi
+        echo "Audit de sécurité Maven terminé avec succès"
+
+    } catch (Exception e) {
+        echo "Audit Maven échoué: ${e.getMessage()}"
+
+        if (e.getMessage().contains("timeout") || e.getMessage().contains("Timeout")) {
+            echo "Audit Maven interrompu pour timeout - Continuons le pipeline"
+            currentBuild.result = 'UNSTABLE'
+        } else {
+            echo "Erreur lors de l'audit Maven, mais pipeline continue"
+            currentBuild.result = 'UNSTABLE'
+        }
+    }
+}
+
+def publishTestAndCoverageResults() {
+    // Publication des résultats de tests avec junit
+    if (fileExists('target/surefire-reports/TEST-*.xml')) {
+        junit 'target/surefire-reports/TEST-*.xml'
+        echo "Résultats de tests publiés"
+    }
+
+    // Archivage des rapports de couverture
+    if (fileExists('target/site/jacoco/index.html')) {
+        publishHTML([
+            allowMissing: false,
+            alwaysLinkToLastBuild: true,
+            keepAll: true,
+            reportDir: 'target/site/jacoco',
+            reportFiles: 'index.html',
+            reportName: 'JaCoCo Coverage Report'
+        ])
+
+        archiveArtifacts artifacts: 'target/site/jacoco/**', allowEmptyArchive: true
+        echo "Rapport de couverture archivé et publié"
+    }
+
+    // Publication du rapport de couverture JaCoCo
+    if (fileExists('target/site/jacoco/jacoco.xml')) {
+        try {
+            step([
+                $class: 'JacocoPublisher',
+                execPattern: '**/target/jacoco.exec',
+                classPattern: '**/target/classes',
+                sourcePattern: '**/src/main/java',
+                exclusionPattern: '**/test/**'
+            ])
+            echo "Métriques JaCoCo publiées"
+        } catch (Exception e) {
+            echo "Impossible de publier les métriques JaCoCo: ${e.getMessage()}"
+        }
+    }
+}
+
+def collectDiagnosticInfo() {
+    try {
+        echo "Collecte d'informations de diagnostic..."
+
+        // Informations système
+        sh """
+            echo "=== INFORMATIONS SYSTÈME ==="
+            uname -a
+            echo "=== ESPACE DISQUE ==="
+            df -h
+            echo "=== MÉMOIRE ==="
+            free -h 2>/dev/null || echo "Commande free non disponible"
+            echo "=== PROCESSUS JAVA ==="
+            ps aux | grep java || echo "Aucun processus Java trouvé"
+        """
+
+        // Logs Docker si disponible
+        if (env.DOCKER_AVAILABLE == "true") {
+            sh """
+                echo "=== DOCKER INFO ==="
+                docker info 2>/dev/null || echo "Docker info non disponible"
+                echo "=== CONTENEURS ACTIFS ==="
+                docker ps -a 2>/dev/null || echo "Impossible de lister les conteneurs"
             """
         } else {
-            // Configuration pour Jenkins local
-            echo "🖥️ Configuration Jenkins local:"
-            sh """
-                echo "📋 Vérification des outils locaux:"
-                which java || echo "❌ Java non trouvé dans PATH"
-                which mvn || echo "❌ Maven non trouvé dans PATH"
-                echo "JAVA_HOME actuel: \${JAVA_HOME:-'Non défini'}"
-                echo "MAVEN_HOME actuel: \${MAVEN_HOME:-'Non défini'}"
-            """
+            echo "=== DOCKER STATUS ==="
+            echo "Docker n'est pas disponible sur ce système"
         }
 
-        // Configuration commune
-        env.DOCKER_HOST = jenkinsConfig.dockerHost
-
     } catch (Exception e) {
-        echo "⚠️ Erreur lors de la configuration Docker: ${e.getMessage()}"
+        echo "Erreur lors de la collecte de diagnostic: ${e.getMessage()}"
     }
 }
 
@@ -534,7 +596,7 @@ def checkDockerAvailability() {
                 # Vérification avec retry
                 for i in 1 2 3; do
                     if command -v docker >/dev/null 2>&1; then
-                        if timeout 10 docker info >/dev/null 2>&1; then
+                        if timeout 30 docker info >/dev/null 2>&1; then
                             echo "true"
                             exit 0
                         fi
@@ -548,55 +610,50 @@ def checkDockerAvailability() {
         ).trim()
 
         if (result == "true") {
-            echo "✅ Docker disponible et fonctionnel"
-            sh '''
-                docker --version
-                echo "🐳 Informations Docker:"
-                docker info --format "{{.ServerVersion}}" 2>/dev/null || echo "Version non disponible"
-            '''
+            echo "Docker disponible et fonctionnel"
+            sh 'docker --version || echo "Version Docker indisponible"'
         } else {
-            echo "❌ Docker non disponible ou non fonctionnel"
-            echo "💡 Vérifiez que Docker est installé et que le daemon est démarré"
-            echo "💡 Vérifiez les permissions de l'utilisateur Jenkins"
+            echo "Docker non disponible ou non fonctionnel"
+            echo "Le pipeline continuera sans les étapes Docker"
+            echo "Vérifiez que Docker est installé et que le daemon est démarré"
+            echo "Vérifiez les permissions de l'utilisateur Jenkins"
         }
 
         return result
     } catch (Exception e) {
-        echo "❌ Erreur lors de la vérification Docker: ${e.getMessage()}"
+        echo "Erreur lors de la vérification Docker: ${e.getMessage()}"
         return "false"
     }
 }
 
-def displayBuildInfo(config, jenkinsEnv) {
-    def jenkinsConfig = config.jenkins[jenkinsEnv]
-
+def displayBuildInfo(config) {
     echo """
-    ╔══════════════════════════════════════════════════════════════════════════════╗
-    ║                            CONFIGURATION BUILD                               ║
-    ╠══════════════════════════════════════════════════════════════════════════════╣
-    ║ 🏗️  Build #: ${env.BUILD_NUMBER}
-    ║ 🌿 Branch: ${env.BRANCH_NAME}
-    ║ 🖥️  Jenkins Env: ${jenkinsEnv.toUpperCase()}
-    ║ ☕ JDK Tool: ${jenkinsConfig.jdkTool}
-    ║ 📦 Maven Tool: ${jenkinsConfig.mavenTool}
-    ║ 🐳 Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Disponible" : "❌ Indisponible"}
-    ║ 🌍 Environnement: ${env.ENV_NAME}
-    ║ 🚪 Port: ${env.HTTP_PORT}
-    ║ 🏷️  Tag: ${env.CONTAINER_TAG}
-    ║ 📧 Email: ${config.emailRecipients}
-    ║ 🔍 SonarQube: ${jenkinsConfig.sonarUrl}
-    ║ 🌐 Docker Network: ${jenkinsConfig.dockerNetwork}
-    ╚══════════════════════════════════════════════════════════════════════════════╝
+    ================================================================================
+                            CONFIGURATION BUILD
+    ================================================================================
+     Build #: ${env.BUILD_NUMBER}
+     Branch: ${env.BRANCH_NAME}
+     Java: ${env.JAVA_HOME}
+     Maven: ${env.MAVEN_HOME}
+     Docker: ${env.DOCKER_AVAILABLE == "true" ? "Disponible" : "Indisponible"}
+     Environnement: ${env.ENV_NAME}
+     Port: ${env.HTTP_PORT}
+     Tag: ${env.CONTAINER_TAG}
+     Email: ${config.emailRecipients}
+     SonarQube: ${config.sonar.communityEdition ? "Community Edition" : "Developer Edition+"}
+     Projet SonarQube: ${env.SONAR_PROJECT_KEY}
+     Sécurité: Audit Maven uniquement (OWASP désactivé)
+    ================================================================================
     """
 }
 
 def validateDockerPrerequisites() {
     if (env.DOCKER_AVAILABLE != "true") {
-        error "🚫 Docker n'est pas disponible. Impossible de continuer avec les étapes Docker."
+        error "Docker n'est pas disponible. Impossible de continuer avec les étapes Docker."
     }
 
     if (!fileExists('Dockerfile')) {
-        error "🚫 Fichier Dockerfile introuvable à la racine du projet."
+        error "Fichier Dockerfile introuvable à la racine du projet."
     }
 
     def jarFiles = findFiles(glob: 'target/*.jar').findAll {
@@ -604,42 +661,39 @@ def validateDockerPrerequisites() {
     }
 
     if (jarFiles.length == 0) {
-        error "🚫 Aucun fichier JAR exécutable trouvé dans target/"
+        error "Aucun fichier JAR exécutable trouvé dans target/"
     }
 
     env.JAR_FILE = jarFiles[0].path
-    echo "✅ JAR trouvé: ${env.JAR_FILE}"
+    echo "JAR trouvé: ${env.JAR_FILE}"
 }
 
-def buildDockerImage(config, jenkinsEnv) {
+def buildDockerImage(config) {
     try {
-        echo "🏗️ Construction de l'image Docker sur Jenkins ${jenkinsEnv}..."
+        echo "Construction de l'image Docker..."
 
-        def buildArgs = [
-            "--pull",
-            "--no-cache",
-            "--build-arg JAR_FILE=${env.JAR_FILE}",
-            "--build-arg BUILD_DATE=\"\$(date -u +'%Y-%m-%dT%H:%M:%SZ')\"",
-            "--build-arg VCS_REF=\"\$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')\"",
-            "--build-arg BUILD_NUMBER=\"${env.BUILD_NUMBER}\"",
-            "--build-arg JENKINS_ENV=\"${jenkinsEnv}\"",
-            "--label \"org.opencontainers.image.created=\$(date -u +'%Y-%m-%dT%H:%M:%SZ')\"",
-            "--label \"org.opencontainers.image.revision=\$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')\"",
-            "--label \"org.opencontainers.image.version=${env.CONTAINER_TAG}\"",
-            "--label \"jenkins.environment=${jenkinsEnv}\"",
-            "-t \"${config.containerName}:${env.CONTAINER_TAG}\"",
-            "."
-        ]
+        sh """
+            docker build \
+                --pull \
+                --no-cache \
+                --build-arg JAR_FILE=${env.JAR_FILE} \
+                --build-arg BUILD_DATE="\$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+                --build-arg VCS_REF="\$(git rev-parse --short HEAD)" \
+                --build-arg BUILD_NUMBER="${env.BUILD_NUMBER}" \
+                --label "org.opencontainers.image.created=\$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+                --label "org.opencontainers.image.revision=\$(git rev-parse --short HEAD)" \
+                --label "org.opencontainers.image.version=${env.CONTAINER_TAG}" \
+                -t "${config.containerName}:${env.CONTAINER_TAG}" \
+                .
+        """
 
-        sh "docker build ${buildArgs.join(' ')}"
-
-        echo "✅ Image Docker construite avec succès"
+        echo "Image Docker construite avec succès"
 
         // Vérification de l'image
         sh "docker images ${config.containerName}:${env.CONTAINER_TAG}"
 
     } catch (Exception e) {
-        error "🚫 Échec de la construction Docker: ${e.getMessage()}"
+        error "Échec de la construction Docker: ${e.getMessage()}"
     }
 }
 
@@ -651,91 +705,81 @@ def pushDockerImage(config) {
             passwordVariable: 'DOCKER_PASSWORD'
         )]) {
 
-            echo "🚀 Connexion au registre Docker..."
+            echo "Connexion au registre Docker..."
             sh """
                 echo "\${DOCKER_PASSWORD}" | docker login -u "\${DOCKER_USER}" --password-stdin ${config.dockerRegistry}
             """
 
-            echo "🏷️ Tagging de l'image..."
+            echo "Tagging de l'image..."
             sh """
                 docker tag "${config.containerName}:${env.CONTAINER_TAG}" "\${DOCKER_USER}/${config.containerName}:${env.CONTAINER_TAG}"
             """
 
-            echo "📤 Push de l'image..."
+            echo "Push de l'image..."
             sh """
                 docker push "\${DOCKER_USER}/${config.containerName}:${env.CONTAINER_TAG}"
             """
 
             // Tag latest pour master
             if (env.BRANCH_NAME == 'master') {
-                echo "🏷️ Tagging latest pour master..."
+                echo "Tagging latest pour master..."
                 sh """
                     docker tag "${config.containerName}:${env.CONTAINER_TAG}" "\${DOCKER_USER}/${config.containerName}:latest"
                     docker push "\${DOCKER_USER}/${config.containerName}:latest"
                 """
             }
 
-            echo "🔒 Déconnexion du registre..."
+            echo "Déconnexion du registre..."
             sh "docker logout ${config.dockerRegistry}"
 
-            echo "✅ Image poussée avec succès"
+            echo "Image poussée avec succès"
         }
     } catch (Exception e) {
-        error "🚫 Échec du push Docker: ${e.getMessage()}"
+        error "Échec du push Docker: ${e.getMessage()}"
     }
 }
 
-def deployApplication(config, jenkinsEnv) {
+def deployApplication(config) {
     try {
-        def jenkinsConfig = config.jenkins[jenkinsEnv]
-
         withCredentials([usernamePassword(
             credentialsId: 'dockerhub-credentials',
             usernameVariable: 'DOCKER_USER',
             passwordVariable: 'DOCKER_PASSWORD'
         )]) {
 
-            echo "🛑 Arrêt du conteneur existant..."
+            echo "Arrêt du conteneur existant..."
             sh """
                 docker stop ${config.containerName} 2>/dev/null || echo "Conteneur non trouvé"
                 docker rm ${config.containerName} 2>/dev/null || echo "Conteneur non trouvé"
             """
 
-            def networkParam = ""
-            if (jenkinsEnv == 'docker' && jenkinsConfig.dockerNetwork != 'host') {
-                // Créer le réseau s'il n'existe pas
-                sh """
-                    docker network create ${jenkinsConfig.dockerNetwork} 2>/dev/null || echo "Réseau déjà existant"
-                """
-                networkParam = "--network ${jenkinsConfig.dockerNetwork}"
-            } else if (jenkinsEnv == 'local') {
-                networkParam = "--network host"
-            }
-
-            echo "🚀 Démarrage du nouveau conteneur sur Jenkins ${jenkinsEnv}..."
+            echo "Démarrage du nouveau conteneur..."
             sh """
                 docker run -d \
                     --name "${config.containerName}" \
                     --restart unless-stopped \
-                    ${networkParam} \
                     -p "${env.HTTP_PORT}:8080" \
                     -e "SPRING_PROFILES_ACTIVE=${env.ENV_NAME}" \
                     -e "SERVER_PORT=8080" \
                     -e "JAVA_OPTS=-Xmx512m -Xms256m" \
-                    -e "JENKINS_DEPLOY_ENV=${jenkinsEnv}" \
+                    --health-cmd="curl -f http://localhost:8080/actuator/health || exit 1" \
+                    --health-interval=30s \
+                    --health-timeout=10s \
+                    --health-start-period=60s \
+                    --health-retries=3 \
                     "\${DOCKER_USER}/${config.containerName}:${env.CONTAINER_TAG}"
             """
 
-            echo "✅ Conteneur démarré avec succès sur Jenkins ${jenkinsEnv}"
+            echo "Conteneur démarré avec succès"
         }
     } catch (Exception e) {
-        error "🚫 Échec du déploiement: ${e.getMessage()}"
+        error "Échec du déploiement: ${e.getMessage()}"
     }
 }
 
-def performHealthCheck(config, jenkinsEnv) {
+def performHealthCheck(config) {
     try {
-        echo "🩺 Vérification de la santé de l'application sur Jenkins ${jenkinsEnv}..."
+        echo "Vérification de la santé de l'application..."
 
         // Attendre que le conteneur soit en cours d'exécution
         timeout(time: config.timeouts.deployment, unit: 'MINUTES') {
@@ -752,7 +796,7 @@ def performHealthCheck(config, jenkinsEnv) {
                         return true
                     } else if (status == "exited") {
                         sh "docker logs ${config.containerName} --tail 50"
-                        error "❌ Le conteneur s'est arrêté de manière inattendue"
+                        error "Le conteneur s'est arrêté de manière inattendue"
                     }
 
                     sleep(10)
@@ -762,105 +806,123 @@ def performHealthCheck(config, jenkinsEnv) {
         }
 
         // Attendre que l'application soit prête
-        echo "⏳ Attente du démarrage de l'application..."
+        echo "Attente du démarrage de l'application..."
         sleep(30)
 
-        // Test HTTP avec URL adaptée selon l'environnement
-        def healthUrl = getHealthCheckUrl(jenkinsEnv, env.HTTP_PORT)
-        echo "🔍 Test de santé sur: ${healthUrl}"
-
-        timeout(time: 2, unit: 'MINUTES') {
+        // Test HTTP avec plusieurs endpoints
+        timeout(time: 3, unit: 'MINUTES') {
             waitUntil {
                 script {
-                    def exitCode = sh(
-                        script: "curl -f -s ${healthUrl} > /dev/null",
-                        returnStatus: true
-                    )
+                    def healthEndpoints = [
+                        "http://localhost:${env.HTTP_PORT}/actuator/health",
+                        "http://localhost:${env.HTTP_PORT}/actuator/info"
+                    ]
 
-                    if (exitCode == 0) {
-                        echo "✅ Application répond correctement"
+                    def allHealthy = true
+                    healthEndpoints.each { endpoint ->
+                        def exitCode = sh(
+                            script: "curl -f -s ${endpoint} > /dev/null",
+                            returnStatus: true
+                        )
+
+                        if (exitCode != 0) {
+                            allHealthy = false
+                            echo "Endpoint ${endpoint} pas encore prêt..."
+                        }
+                    }
+
+                    if (allHealthy) {
+                        echo "Tous les endpoints répondent correctement"
                         return true
                     } else {
-                        echo "⏳ Application pas encore prête..."
-                        sleep(10)
+                        sleep(15)
                         return false
                     }
                 }
             }
         }
 
-        echo "✅ Application en bonne santé et accessible sur Jenkins ${jenkinsEnv}"
+        echo "Application en bonne santé et accessible"
 
     } catch (Exception e) {
         // Logs pour debug
-        sh "docker logs ${config.containerName} --tail 100 || echo 'Impossible de récupérer les logs'"
-        error "🚫 Health check échoué: ${e.getMessage()}"
-    }
-}
-
-def getHealthCheckUrl(jenkinsEnv, port) {
-    if (jenkinsEnv == 'docker') {
-        // Dans Docker, utiliser le nom du conteneur ou localhost selon la configuration réseau
-        return "http://localhost:${port}/actuator/health"
-    } else {
-        // En local, utiliser localhost
-        return "http://localhost:${port}/actuator/health"
+        sh "docker logs ${config.containerName} --tail 100 2>/dev/null || echo 'Impossible de récupérer les logs'"
+        sh "docker inspect ${config.containerName} 2>/dev/null || echo 'Impossible d\\'inspecter le conteneur'"
+        error "Health check échoué: ${e.getMessage()}"
     }
 }
 
 def cleanupDockerImages(config) {
     try {
-        if (env.DOCKER_AVAILABLE == "true") {
-            echo "🧹 Nettoyage des images Docker..."
-            sh """
-                # Suppression des images non taguées
-                docker image prune -f || true
+        echo "Nettoyage des images Docker..."
+        sh """
+            # Suppression des images non taguées
+            docker image prune -f 2>/dev/null || true
 
-                # Garde seulement les 3 dernières versions de notre image
-                docker images "${config.containerName}" --format "{{.Repository}}:{{.Tag}}" | \
-                head -n -3 | xargs -r docker rmi || true
-            """
-        }
+            # Garde seulement les 3 dernières versions de notre image
+            docker images "${config.containerName}" --format "{{.Repository}}:{{.Tag}}" 2>/dev/null | \
+            head -n -3 | xargs -r docker rmi 2>/dev/null || true
+
+            # Nettoyage des volumes orphelins
+            docker volume prune -f 2>/dev/null || true
+        """
+        echo "Nettoyage Docker terminé"
     } catch (Exception e) {
-        echo "⚠️ Erreur lors du nettoyage Docker: ${e.getMessage()}"
+        echo "Erreur lors du nettoyage Docker: ${e.getMessage()}"
     }
 }
 
-def sendNotification(recipients, jenkinsEnv) {
+def sendNotification(recipients) {
     try {
         def cause = currentBuild.getBuildCauses()?.collect { it.shortDescription }?.join(', ') ?: "Non spécifiée"
         def duration = currentBuild.durationString.replace(' and counting', '')
         def status = currentBuild.currentResult ?: 'SUCCESS'
 
         def statusIcon = [
-            'SUCCESS': '✅',
-            'FAILURE': '❌',
-            'UNSTABLE': '⚠️',
-            'ABORTED': '🛑'
-        ][status] ?: '❓'
+            'SUCCESS': 'SUCCESS',
+            'FAILURE': 'FAILURE',
+            'UNSTABLE': 'UNSTABLE',
+            'ABORTED': 'ABORTED'
+        ][status] ?: 'UNKNOWN'
 
-        def subject = "${statusIcon} [Jenkins-${jenkinsEnv.toUpperCase()}] ${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - ${status}"
+        def subject = "[Jenkins] ${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - ${status}"
+
+        def dockerStatus = env.DOCKER_AVAILABLE == "true" ? "Disponible" : "Indisponible"
+        def deploymentInfo = ""
+
+        if (env.DOCKER_AVAILABLE == "true" && status == 'SUCCESS') {
+            deploymentInfo = """
+        Application déployée sur: http://localhost:${env.HTTP_PORT}
+        Conteneur: ${config.containerName}:${env.CONTAINER_TAG}
+            """
+        } else if (env.DOCKER_AVAILABLE != "true") {
+            deploymentInfo = """
+        Déploiement Docker ignoré (Docker indisponible)
+        Artefacts Maven générés avec succès
+            """
+        }
 
         def body = """
-        ${statusIcon} Résultat: ${status}
+        Résultat: ${status}
 
-        📊 Détails du Build:
+        Détails du Build:
         • Projet: ${env.JOB_NAME}
         • Build: #${env.BUILD_NUMBER}
         • Branche: ${env.BRANCH_NAME ?: 'N/A'}
         • Durée: ${duration}
         • Environnement: ${env.ENV_NAME}
         • Port: ${env.HTTP_PORT}
-        • Jenkins: ${jenkinsEnv.toUpperCase()}
 
-        🔗 Liens:
+        Liens:
         • Console: ${env.BUILD_URL}console
         • Artefacts: ${env.BUILD_URL}artifact/
 
-        🐳 Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Disponible" : "❌ Indisponible"}
-        🚀 Cause: ${cause}
+        Docker: ${dockerStatus}
+        Sécurité: Audit Maven uniquement (OWASP désactivé)
+        Cause: ${cause}
+        ${deploymentInfo}
 
-        ${status == 'SUCCESS' ? '🎉 Déploiement réussi!' : '🔍 Vérifiez les logs pour plus de détails.'}
+        ${status == 'SUCCESS' ? 'Build réussi!' : status == 'UNSTABLE' ? 'Build instable - Vérifiez les rapports.' : 'Vérifiez les logs pour plus de détails.'}
         """
 
         mail(
@@ -870,10 +932,10 @@ def sendNotification(recipients, jenkinsEnv) {
             mimeType: 'text/plain'
         )
 
-        echo "📧 Email de notification envoyé à: ${recipients}"
+        echo "Email de notification envoyé à: ${recipients}"
 
     } catch (Exception e) {
-        echo "⚠️ Échec de l'envoi d'email: ${e.getMessage()}"
+        echo "Échec de l'envoi d'email: ${e.getMessage()}"
     }
 }
 
@@ -896,4 +958,15 @@ String getTag(String buildNumber, String branchName) {
     return (safeBranch == 'master') ?
         "${buildNumber}-stable" :
         "${buildNumber}-${safeBranch}-snapshot"
+}
+
+String getSonarProjectKey(String branchName, Map sonarConfig) {
+    // Pour SonarQube Community Edition, on utilise un seul projet
+    // Pour Developer Edition+, on peut utiliser des clés différentes par branche
+    if (sonarConfig.communityEdition) {
+        return sonarConfig.projectKey
+    } else {
+        def branch = branchName?.toLowerCase()
+        return "${sonarConfig.projectKey}${branch == 'master' ? '' : '-' + branch}"
+    }
 }
