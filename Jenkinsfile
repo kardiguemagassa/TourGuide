@@ -22,7 +22,7 @@ def config = [
         qualityGate: 2,
         deployment: 5,
         sonarAnalysis: 10,
-        securityAudit: 10  // Timeout pour l'audit Maven seulement
+        owaspCheck: 25  // Augmenté le timeout pour OWASP
     ],
     ports: [
         master: '9003',
@@ -81,39 +81,6 @@ pipeline {
 
                     // Affichage de la configuration
                     displayBuildInfo(config)
-                }
-            }
-        }
-
-        stage('Install Local Dependencies') {
-            steps {
-                script {
-                    echo "📦 Installation des dépendances locales (libs/*.jar)..."
-                    sh '''
-                        mvn install:install-file \
-                            -Dfile=libs/gpsUtil.jar \
-                            -DgroupId=gpsUtil \
-                            -DartifactId=gpsUtil \
-                            -Dversion=1.0.0 \
-                            -Dpackaging=jar \
-                            -Dmaven.repo.local=${WORKSPACE}/.m2/repository
-
-                        mvn install:install-file \
-                            -Dfile=libs/TripPricer.jar \
-                            -DgroupId=tripPricer \
-                            -DartifactId=tripPricer \
-                            -Dversion=1.0.0 \
-                            -Dpackaging=jar \
-                            -Dmaven.repo.local=${WORKSPACE}/.m2/repository
-
-                        mvn install:install-file \
-                            -Dfile=libs/rewardCentral.jar \
-                            -DgroupId=rewardCentral \
-                            -DartifactId=rewardCentral \
-                            -Dversion=1.0.0 \
-                            -Dpackaging=jar \
-                            -Dmaven.repo.local=${WORKSPACE}/.m2/repository
-                    '''
                 }
             }
         }
@@ -189,19 +156,41 @@ pipeline {
             }
         }
 
-        stage('Security Audit') {
-            when {
-                anyOf {
-                    branch 'master'
-                    branch 'develop'
+        stage('Security & Dependency Check') {
+            parallel {
+                stage('OWASP Dependency Check') {
+                    when {
+                        anyOf {
+                            branch 'master'
+                            branch 'develop'
+                        }
+                    }
+                    options {
+                        timeout(time: 25, unit: 'MINUTES')
+                    }
+                    steps {
+                        script {
+                            runDependencyCheckWithNVDKey(config)
+                        }
+                    }
+                    post {
+                        always {
+                            script {
+                                archiveOwaspReports()
+                            }
+                        }
+                    }
                 }
-            }
-            options {
-                timeout(time: 10, unit: 'MINUTES')
-            }
-            steps {
-                script {
-                    runMavenSecurityAudit()
+
+                stage('Maven Security Audit') {
+                    options {
+                        timeout(time: 10, unit: 'MINUTES')
+                    }
+                    steps {
+                        script {
+                            runMavenSecurityAudit()
+                        }
+                    }
                 }
             }
         }
@@ -482,6 +471,105 @@ def checkQualityGate(config) {
     }
 }
 
+// FONCTION CORRIGÉE POUR OWASP DEPENDENCY CHECK AVEC NVD API KEY
+def runDependencyCheckWithNVDKey(config) {
+    try {
+        echo "Vérification des dépendances OWASP avec NVD API Key..."
+
+        // Utilisation des credentials pour la clé NVD API
+        withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
+            echo "Clé NVD API configurée"
+            echo "Lancement de l'analyse OWASP avec mise à jour NVD..."
+
+            timeout(time: config.timeouts.owaspCheck, unit: 'MINUTES') {
+                def checkCommand = """
+                    mvn org.owasp:dependency-check-maven:check \
+                        -DnvdApiKey=\${NVD_API_KEY} \
+                        -DautoUpdate=true \
+                        -DcveValidForHours=24 \
+                        -DfailBuildOnCVSS=7.0 \
+                        -DskipProvidedScope=true \
+                        -DskipRuntimeScope=false \
+                        -DsuppressFailureOnError=false \
+                        -DretireJsAnalyzerEnabled=false \
+                        -DnodeAnalyzerEnabled=false \
+                        -DossindexAnalyzerEnabled=false \
+                        -DnvdDatafeedEnabled=true \
+                        -DnvdMaxRetryCount=3 \
+                        -DnvdDelay=2000 \
+                        -Dformat=ALL \
+                        -B -X
+                """
+
+                def exitCode = sh(script: checkCommand, returnStatus: true)
+
+                if (exitCode == 0) {
+                    echo "Aucune vulnérabilité critique détectée"
+                } else if (exitCode == 1) {
+                    echo "Vulnérabilités détectées mais en dessous du seuil critique"
+                    currentBuild.result = 'UNSTABLE'
+                } else {
+                    echo "Erreur lors de l'exécution d'OWASP Dependency Check"
+                    error "OWASP Dependency Check a échoué avec le code de sortie: ${exitCode}"
+                }
+            }
+        }
+
+        echo "Vérification OWASP terminée avec succès"
+
+    } catch (Exception e) {
+        def errorMessage = e.getMessage()
+        echo "Problème avec OWASP Dependency Check: ${errorMessage}"
+
+        if (errorMessage.contains("timeout") || errorMessage.contains("Timeout")) {
+            echo "OWASP Dependency Check interrompu pour timeout"
+            currentBuild.result = 'UNSTABLE'
+        } else if (errorMessage.contains("403") || errorMessage.contains("NVD Returned Status Code: 403")) {
+            echo "Problème d'authentification avec l'API NVD"
+            echo "Vérifiez que la clé API 'nvd-api-key' est correctement configurée dans Jenkins"
+            currentBuild.result = 'UNSTABLE'
+        } else if (errorMessage.contains("CVE") || errorMessage.contains("vulnerability")) {
+            echo "Vulnérabilités critiques détectées - Pipeline marqué comme instable"
+            currentBuild.result = 'UNSTABLE'
+        } else {
+            echo "Erreur inattendue - Arrêt du pipeline"
+            throw e
+        }
+    }
+}
+
+def archiveOwaspReports() {
+    // Archivage des différents formats de rapport OWASP
+    def reportFormats = [
+        'dependency-check-report.html',
+        'dependency-check-report.xml',
+        'dependency-check-report.json',
+        'dependency-check-report.csv'
+    ]
+
+    reportFormats.each { format ->
+        if (fileExists("target/${format}")) {
+            archiveArtifacts artifacts: "target/${format}", allowEmptyArchive: true
+            echo "Rapport ${format} archivé"
+        }
+    }
+
+    // Publication du rapport HTML principal
+    if (fileExists('target/dependency-check-report.html')) {
+        publishHTML([
+            allowMissing: false,
+            alwaysLinkToLastBuild: true,
+            keepAll: true,
+            reportDir: 'target',
+            reportFiles: 'dependency-check-report.html',
+            reportName: 'OWASP Dependency Check Report'
+        ])
+        echo "Rapport OWASP HTML publié"
+    } else {
+        echo "Aucun rapport OWASP HTML généré"
+    }
+}
+
 def runMavenSecurityAudit() {
     try {
         echo "Audit de sécurité Maven..."
@@ -501,17 +589,13 @@ def runMavenSecurityAudit() {
             """
         }
 
-        echo "Audit de sécurité Maven terminé avec succès"
+        echo "Audit de sécurité Maven terminé"
 
     } catch (Exception e) {
         echo "Audit Maven échoué: ${e.getMessage()}"
 
         if (e.getMessage().contains("timeout") || e.getMessage().contains("Timeout")) {
             echo "Audit Maven interrompu pour timeout - Continuons le pipeline"
-            currentBuild.result = 'UNSTABLE'
-        } else {
-            echo "Erreur lors de l'audit Maven, mais pipeline continue"
-            currentBuild.result = 'UNSTABLE'
         }
     }
 }
@@ -642,7 +726,7 @@ def displayBuildInfo(config) {
      Email: ${config.emailRecipients}
      SonarQube: ${config.sonar.communityEdition ? "Community Edition" : "Developer Edition+"}
      Projet SonarQube: ${env.SONAR_PROJECT_KEY}
-     Sécurité: Audit Maven uniquement (OWASP désactivé)
+     OWASP NVD API: Configurée via Jenkins Credentials
     ================================================================================
     """
 }
@@ -918,11 +1002,11 @@ def sendNotification(recipients) {
         • Artefacts: ${env.BUILD_URL}artifact/
 
         Docker: ${dockerStatus}
-        Sécurité: Audit Maven uniquement (OWASP désactivé)
+        OWASP NVD: ${status.contains('UNSTABLE') ? 'Vulnérabilités détectées' : 'Aucune vulnérabilité critique'}
         Cause: ${cause}
         ${deploymentInfo}
 
-        ${status == 'SUCCESS' ? 'Build réussi!' : status == 'UNSTABLE' ? 'Build instable - Vérifiez les rapports.' : 'Vérifiez les logs pour plus de détails.'}
+        ${status == 'SUCCESS' ? 'Build réussi!' : status == 'UNSTABLE' ? 'Build instable - Vérifiez les rapports de sécurité.' : 'Vérifiez les logs pour plus de détails.'}
         """
 
         mail(
