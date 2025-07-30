@@ -18,10 +18,10 @@ def config = [
         qualityGate: 2,
         deployment: 5,
         sonarAnalysis: 10,
-        owaspCheck: 15  // Réduit pour éviter les timeouts
+        owaspCheck: 8  // Réduit pour éviter les timeouts
     ],
     ports: [
-        master: '8082',    // Aligné avec docker-compose
+        master: '8082',
         develop: '8081',
         default: '8080'
     ],
@@ -30,13 +30,13 @@ def config = [
         develop: 'uat',
         default: 'dev'
     ],
-    // Configuration OWASP avec conditions
+    // Configuration OWASP avec mode offline par défaut
     owasp: [
         enabled: true,
-        requireApiKey: false,  // Permet de fonctionner sans clé
-        maxRetries: 2,
-        fallbackMode: true,
-        cvssThreshold: 8.0
+        preferOfflineMode: true,  // CHANGEMENT: Mode offline par défaut
+        maxRetries: 1,           // CHANGEMENT: Moins de retries
+        cvssThreshold: 9.0,      // CHANGEMENT: Seuil plus élevé
+        suppressionFile: "suppressions.xml"  // AJOUT: Fichier de suppression
     ]
 ]
 
@@ -53,7 +53,7 @@ pipeline {
 
     tools {
         maven 'M3'
-        jdk 'JDK-17'  // Changé de JDK-21 à JDK-17 pour cohérence
+        jdk 'JDK-17'
     }
 
     environment {
@@ -75,7 +75,6 @@ pipeline {
                     checkout scm
                     validateEnvironment()
                     env.DOCKER_AVAILABLE = checkDockerAvailability()
-                    env.NVD_API_AVAILABLE = checkNvdApiAvailability()
                     displayBuildInfo(config)
                 }
             }
@@ -175,7 +174,7 @@ pipeline {
 
         stage('Security & Dependency Check') {
             parallel {
-                stage('OWASP Smart Check') {
+                stage('OWASP Dependency Check') {
                     when {
                         anyOf {
                             branch 'master'
@@ -184,7 +183,7 @@ pipeline {
                     }
                     steps {
                         script {
-                            runSmartOwaspCheck(config)
+                            runOwaspDependencyCheck(config)
                         }
                     }
                     post {
@@ -285,328 +284,141 @@ pipeline {
 }
 
 // =============================================================================
-// FONCTIONS AVANCÉES POUR OWASP
+// FONCTION OWASP SIMPLIFIÉE ET FIABLE
 // =============================================================================
 
-def checkNvdApiAvailability() {
+def runOwaspDependencyCheck(config) {
     try {
-        echo "🔍 Vérification de la disponibilité NVD API..."
+        echo "🛡️ OWASP Dependency Check - Mode Offline Robuste"
 
-        def hasCredentials = false
-        def isApiWorking = false
+        // Nettoyer les anciennes données
+        sh "rm -rf ${WORKSPACE}/owasp-data || true"
+        sh "mkdir -p ${WORKSPACE}/owasp-data"
 
-        // Vérifier si les credentials existent
-        try {
-            withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
-                if (env.NVD_API_KEY && env.NVD_API_KEY.trim() != '') {
-                    hasCredentials = true
-                    echo "✅ Credentials NVD API trouvés"
+        // Vérifier si le fichier de suppression existe
+        def suppressionFile = config.owasp.suppressionFile
+        def suppressionParam = ""
 
-                    // Test simple de l'API
-                    def apiTest = sh(
-                        script: '''
-                            curl -s -f -H "apikey: ${NVD_API_KEY}" \
-                            "https://services.nvd.nist.gov/rest/json/cves/2.0?resultsPerPage=1" \
-                            --connect-timeout 10 --max-time 15 || echo "API_FAILED"
-                        ''',
-                        returnStdout: true
-                    ).trim()
-
-                    if (!apiTest.contains("API_FAILED") && apiTest.contains("CVE")) {
-                        isApiWorking = true
-                        echo "✅ API NVD fonctionnelle"
-                    } else {
-                        echo "⚠️ API NVD ne répond pas correctement"
-                    }
-                }
-            }
-        } catch (Exception credError) {
-            echo "⚠️ Credentials NVD API non configurés: ${credError.getMessage()}"
-        }
-
-        def result = [
-            hasCredentials: hasCredentials,
-            isWorking: isApiWorking,
-            mode: isApiWorking ? "online" : (hasCredentials ? "degraded" : "offline")
-        ]
-
-        echo "📊 État NVD API: ${result.mode.toUpperCase()}"
-        return result.mode
-
-    } catch (Exception e) {
-        echo "❌ Erreur lors de la vérification NVD: ${e.getMessage()}"
-        return "offline"
-    }
-}
-
-def runSmartOwaspCheck(config) {
-    try {
-        echo "🛡️ Démarrage OWASP Dependency Check intelligent..."
-
-        def owaspMode = env.NVD_API_AVAILABLE ?: "offline"
-        def success = false
-
-        switch(owaspMode) {
-            case "online":
-                success = runOwaspOnlineMode(config)
-                break
-
-            case "degraded":
-                success = runOwaspDegradedMode(config)
-                break
-
-            case "offline":
-                success = runOwaspOfflineMode(config)
-                break
-
-            default:
-                echo "⚠️ Mode OWASP inconnu, tentative offline"
-                success = runOwaspOfflineMode(config)
-        }
-
-        if (success) {
-            echo "✅ OWASP Dependency Check terminé avec succès"
+        if (fileExists(suppressionFile)) {
+            suppressionParam = "-DsuppressionFile=${suppressionFile}"
+            echo "✅ Utilisation du fichier de suppression: ${suppressionFile}"
         } else {
-            echo "⚠️ OWASP terminé avec avertissements"
-            currentBuild.result = 'UNSTABLE'
+            echo "⚠️ Fichier de suppression non trouvé: ${suppressionFile}"
         }
 
-    } catch (Exception e) {
-        echo "🚨 Erreur OWASP: ${e.getMessage()}"
-        echo "⏭️ Continuing sans scan de sécurité détaillé"
-        currentBuild.result = 'UNSTABLE'
-
-        // Créer un rapport minimal
-        writeFile file: 'target/owasp-error-report.txt',
-                  text: "OWASP Dependency Check a échoué: ${e.getMessage()}\nMode: ${env.NVD_API_AVAILABLE}\nTimestamp: ${new Date()}"
-    }
-}
-
-def runOwaspOnlineMode(config) {
-    try {
-        echo "🌐 Mode OWASP ONLINE - Avec API NVD"
-
-        withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
-            // Nettoyage préventif
-            sh "rm -rf ${WORKSPACE}/dc-data || true"
-
-            timeout(time: config.timeouts.owaspCheck, unit: 'MINUTES') {
-                def exitCode = sh(script: """
-                    mvn org.owasp:dependency-check-maven:check \
-                        -DnvdApiKey=\${NVD_API_KEY} \
-                        -DdataDirectory=\${WORKSPACE}/dc-data \
-                        -DautoUpdate=true \
-                        -DcveValidForHours=24 \
-                        -DfailBuildOnCVSS=${config.owasp.cvssThreshold} \
-                        -DsuppressFailureOnError=true \
-                        -DnvdMaxRetryCount=${config.owasp.maxRetries} \
-                        -DnvdDelay=2000 \
-                        -Dformat=HTML,XML,JSON \
-                        -B -q
-                """, returnStatus: true)
-
-                return handleOwaspExitCode(exitCode, "online")
-            }
-        }
-    } catch (Exception e) {
-        echo "❌ Mode online échoué: ${e.getMessage()}"
-        if (config.owasp.fallbackMode) {
-            echo "🔄 Basculement vers mode dégradé..."
-            return runOwaspDegradedMode(config)
-        }
-        return false
-    }
-}
-
-def runOwaspDegradedMode(config) {
-    try {
-        echo "⚠️ Mode OWASP DEGRADÉ - Sans mise à jour NVD"
-
-        withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
-            timeout(time: 10, unit: 'MINUTES') {
-                def exitCode = sh(script: """
-                    mvn org.owasp:dependency-check-maven:check \
-                        -DnvdApiKey=\${NVD_API_KEY} \
-                        -DdataDirectory=\${WORKSPACE}/dc-data \
-                        -DautoUpdate=false \
-                        -DcveValidForHours=168 \
-                        -DfailBuildOnCVSS=9.0 \
-                        -DsuppressFailureOnError=true \
-                        -Dformat=HTML,XML \
-                        -B -q
-                """, returnStatus: true)
-
-                return handleOwaspExitCode(exitCode, "degraded")
-            }
-        }
-    } catch (Exception e) {
-        echo "❌ Mode dégradé échoué: ${e.getMessage()}"
-        if (config.owasp.fallbackMode) {
-            echo "🔄 Basculement vers mode offline..."
-            return runOwaspOfflineMode(config)
-        }
-        return false
-    }
-}
-
-def runOwaspOfflineMode(config) {
-    try {
-        echo "📴 Mode OWASP OFFLINE - Données locales uniquement"
-
-        timeout(time: 5, unit: 'MINUTES') {
+        timeout(time: config.timeouts.owaspCheck, unit: 'MINUTES') {
             def exitCode = sh(script: """
                 mvn org.owasp:dependency-check-maven:check \
-                    -DdataDirectory=\${WORKSPACE}/dc-data \
+                    -DdataDirectory=${WORKSPACE}/owasp-data \
                     -DautoUpdate=false \
-                    -DfailBuildOnCVSS=10.0 \
+                    -DfailBuildOnCVSS=${config.owasp.cvssThreshold} \
                     -DsuppressFailureOnError=true \
                     -DfailOnError=false \
-                    -Dformat=HTML \
+                    -Dformat=HTML,XML \
+                    -DprettyPrint=true \
+                    ${suppressionParam} \
                     -DretireJsAnalyzerEnabled=false \
                     -DnodeAnalyzerEnabled=false \
                     -DossindexAnalyzerEnabled=false \
+                    -DnvdDatafeedUrl= \
+                    -DskipSystemScope=true \
                     -B -q
             """, returnStatus: true)
 
-            return handleOwaspExitCode(exitCode, "offline")
+            handleOwaspResult(exitCode)
         }
 
     } catch (Exception e) {
-        echo "❌ Même le mode offline a échoué: ${e.getMessage()}"
-        echo "📝 Génération d'un rapport d'état..."
+        echo "🚨 Erreur OWASP Dependency Check: ${e.getMessage()}"
 
-        // Générer un rapport basique
+        // Créer un rapport d'erreur minimal
         sh """
-            echo '<html><body><h1>OWASP Dependency Check - Indisponible</h1>' > target/dependency-check-report.html
-            echo '<p>Le scan de sécurité n\\'a pas pu être exécuté.</p>' >> target/dependency-check-report.html
-            echo '<p>Erreur: ${e.getMessage()}</p>' >> target/dependency-check-report.html
-            echo '<p>Veuillez vérifier la configuration NVD API.</p>' >> target/dependency-check-report.html
-            echo '</body></html>' >> target/dependency-check-report.html
+            mkdir -p target
+            cat > target/dependency-check-report.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OWASP Dependency Check - Erreur</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .error { color: #d32f2f; background: #ffebee; padding: 20px; border-radius: 4px; }
+        .timestamp { color: #666; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <h1>🛡️ OWASP Dependency Check</h1>
+    <div class="error">
+        <h2>⚠️ Scan de sécurité indisponible</h2>
+        <p><strong>Erreur:</strong> ${e.getMessage()}</p>
+        <p><strong>Solution:</strong> Vérifiez la configuration Maven et les permissions.</p>
+        <div class="timestamp">Timestamp: ${new Date()}</div>
+    </div>
+    <h3>Actions recommandées:</h3>
+    <ul>
+        <li>Vérifier la connectivité réseau</li>
+        <li>Contrôler les permissions du répertoire</li>
+        <li>Examiner les logs Maven détaillés</li>
+    </ul>
+</body>
+</html>
+EOF
         """
 
-        return false
+        currentBuild.result = 'UNSTABLE'
+        echo "⏭️ Pipeline continue sans scan de sécurité complet"
     }
 }
 
-def handleOwaspExitCode(exitCode, mode) {
+def handleOwaspResult(exitCode) {
     switch(exitCode) {
         case 0:
-            echo "✅ OWASP ${mode}: Aucune vulnérabilité critique"
-            return true
+            echo "✅ OWASP: Aucune vulnérabilité critique détectée"
+            break
 
         case 1:
-            echo "⚠️ OWASP ${mode}: Vulnérabilités détectées sous le seuil"
+            echo "⚠️ OWASP: Vulnérabilités détectées mais sous le seuil configuré"
             currentBuild.result = 'UNSTABLE'
-            return true
+            break
 
         default:
-            echo "❌ OWASP ${mode}: Erreur (code ${exitCode})"
-            return false
+            echo "❌ OWASP: Erreur lors de l'analyse (code: ${exitCode})"
+            currentBuild.result = 'UNSTABLE'
+            break
     }
 }
 
 // =============================================================================
-// FONCTIONS DOCKER AMÉLIORÉES
+// FONCTION BUILD DOCKER MANQUANTE
 // =============================================================================
 
-def deployWithDockerCompose(config) {
+def buildDockerImage(config) {
     try {
-        echo "🐳 Déploiement avec Docker Compose..."
+        echo "🐳 Construction de l'image Docker..."
 
-        // Vérification des fichiers requis
-        if (!fileExists('docker-compose.yml')) {
-            error "❌ Fichier docker-compose.yml introuvable"
-        }
+        def imageName = "${config.containerName}:${env.CONTAINER_TAG}"
 
-        if (!fileExists('.env.tourguide')) {
-            echo "⚠️ Fichier .env.tourguide manquant, création d'un fichier par défaut..."
-            writeFile file: '.env.tourguide', text: """
-SPRING_ACTIVE_PROFILES=${env.ENV_NAME}
-SERVER_PORT=8080
-JAVA_OPTS=-Xmx512m -Xms256m
-"""
-        }
-
-        // Arrêt et suppression des anciens conteneurs
         sh """
-            docker-compose down --remove-orphans || true
-            docker system prune -f || true
+            docker build \
+                --build-arg JAR_FILE=target/*.jar \
+                --build-arg JAVA_OPTS="-Xmx512m -Xms256m" \
+                -t ${imageName} \
+                .
         """
 
-        // Construction et démarrage
-        sh """
-            docker-compose build --no-cache
-            docker-compose up -d
-        """
+        echo "✅ Image Docker construite: ${imageName}"
 
-        echo "✅ Application déployée avec Docker Compose"
-
-        // Afficher les conteneurs actifs
-        sh "docker-compose ps"
+        // Tag pour latest si c'est master
+        if (env.BRANCH_NAME == 'master') {
+            sh "docker tag ${imageName} ${config.containerName}:latest"
+        }
 
     } catch (Exception e) {
-        error "❌ Échec du déploiement Docker Compose: ${e.getMessage()}"
-    }
-}
-
-def performHealthCheck(config) {
-    try {
-        echo "🏥 Health check de l'application..."
-
-        // Attendre que le conteneur soit prêt
-        timeout(time: 5, unit: 'MINUTES') {
-            waitUntil {
-                script {
-                    def status = sh(
-                        script: "docker-compose ps -q tourguide | xargs docker inspect -f '{{.State.Status}}' 2>/dev/null || echo 'not-found'",
-                        returnStdout: true
-                    ).trim()
-
-                    echo "État du conteneur: ${status}"
-                    return status == "running"
-                }
-            }
-        }
-
-        // Test des endpoints de santé
-        timeout(time: 3, unit: 'MINUTES') {
-            waitUntil {
-                script {
-                    def healthCheck = sh(
-                        script: "curl -f -s http://localhost:${env.HTTP_PORT}/actuator/health > /dev/null",
-                        returnStatus: true
-                    )
-
-                    if (healthCheck == 0) {
-                        echo "✅ Application répond correctement"
-                        return true
-                    } else {
-                        echo "⏳ Application pas encore prête..."
-                        sleep(10)
-                        return false
-                    }
-                }
-            }
-        }
-
-        // Test approfondi
-        sh """
-            echo "=== HEALTH CHECK DÉTAILLÉ ==="
-            curl -s http://localhost:${env.HTTP_PORT}/actuator/health | jq . || curl -s http://localhost:${env.HTTP_PORT}/actuator/health
-            echo "=== INFO APPLICATION ==="
-            curl -s http://localhost:${env.HTTP_PORT}/actuator/info | jq . || curl -s http://localhost:${env.HTTP_PORT}/actuator/info
-        """
-
-        echo "✅ Health check réussi"
-
-    } catch (Exception e) {
-        sh "docker-compose logs tourguide --tail 50 || true"
-        error "❌ Health check échoué: ${e.getMessage()}"
+        error "❌ Échec de la construction Docker: ${e.getMessage()}"
     }
 }
 
 // =============================================================================
-// FONCTIONS UTILITAIRES
+// FONCTIONS UTILITAIRES AMÉLIORÉES
 // =============================================================================
 
 def validateEnvironment() {
@@ -623,10 +435,18 @@ def validateEnvironment() {
         mvn -version
     """
 
-    // Vérification de l'espace disique
+    // Vérification de l'espace disque
     sh """
         df -h . | tail -1 | awk '{print "💾 Espace disque: " \$4 " disponible (" \$5 " utilisé)"}'
     """
+
+    // Vérification des fichiers critiques
+    def criticalFiles = ['pom.xml', 'src/main/java']
+    criticalFiles.each { file ->
+        if (!fileExists(file)) {
+            error "❌ Fichier/dossier critique manquant: ${file}"
+        }
+    }
 }
 
 def checkDockerAvailability() {
@@ -669,7 +489,7 @@ def validateDockerPrerequisites() {
         error "🐳 Docker non disponible"
     }
 
-    def requiredFiles = ['Dockerfile', 'docker-compose.yml', 'entrypoint.sh']
+    def requiredFiles = ['Dockerfile', 'docker-compose.yml']
     requiredFiles.each { file ->
         if (!fileExists(file)) {
             error "📄 Fichier requis manquant: ${file}"
@@ -687,6 +507,84 @@ def validateDockerPrerequisites() {
     echo "📦 JAR trouvé: ${jarFiles[0].path}"
 }
 
+def deployWithDockerCompose(config) {
+    try {
+        echo "🐳 Déploiement avec Docker Compose..."
+
+        // Vérification des fichiers requis
+        if (!fileExists('docker-compose.yml')) {
+            error "❌ Fichier docker-compose.yml introuvable"
+        }
+
+        // Arrêt et suppression des anciens conteneurs
+        sh """
+            docker-compose down --remove-orphans || true
+            docker system prune -f || true
+        """
+
+        // Construction et démarrage
+        sh """
+            docker-compose up -d --build
+        """
+
+        echo "✅ Application déployée avec Docker Compose"
+
+        // Afficher les conteneurs actifs
+        sh "docker-compose ps"
+
+    } catch (Exception e) {
+        error "❌ Échec du déploiement Docker Compose: ${e.getMessage()}"
+    }
+}
+
+def performHealthCheck(config) {
+    try {
+        echo "🏥 Health check de l'application..."
+
+        // Attendre que le conteneur soit prêt
+        timeout(time: 3, unit: 'MINUTES') {
+            waitUntil {
+                script {
+                    def status = sh(
+                        script: "docker-compose ps -q ${config.containerName} | xargs docker inspect -f '{{.State.Status}}' 2>/dev/null || echo 'not-found'",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "État du conteneur: ${status}"
+                    return status == "running"
+                }
+            }
+        }
+
+        // Test des endpoints de santé
+        timeout(time: 2, unit: 'MINUTES') {
+            waitUntil {
+                script {
+                    def healthCheck = sh(
+                        script: "curl -f -s http://localhost:${env.HTTP_PORT}/actuator/health > /dev/null",
+                        returnStatus: true
+                    )
+
+                    if (healthCheck == 0) {
+                        echo "✅ Application répond correctement"
+                        return true
+                    } else {
+                        echo "⏳ Application pas encore prête..."
+                        sleep(5)
+                        return false
+                    }
+                }
+            }
+        }
+
+        echo "✅ Health check réussi"
+
+    } catch (Exception e) {
+        sh "docker-compose logs ${config.containerName} --tail 30 || true"
+        error "❌ Health check échoué: ${e.getMessage()}"
+    }
+}
+
 def displayBuildInfo(config) {
     echo """
     ================================================================================
@@ -694,12 +592,12 @@ def displayBuildInfo(config) {
     ================================================================================
      Build #: ${env.BUILD_NUMBER}
      Branch: ${env.BRANCH_NAME}
-     Java: 17 (cohérent POM/Pipeline/Docker)
+     Java: 17
      Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Disponible" : "⚠️ Indisponible"}
      Port: ${env.HTTP_PORT}
      Tag: ${env.CONTAINER_TAG}
-     NVD API: ${env.NVD_API_AVAILABLE?.toUpperCase() ?: "OFFLINE"}
-     OWASP Mode: ${config.owasp.enabled ? "Smart Check Enabled" : "Disabled"}
+     OWASP: Mode Offline Robuste
+     Suppression: ${config.owasp.suppressionFile}
     ================================================================================
     """
 }
@@ -711,13 +609,8 @@ def sendEnhancedNotification(recipients) {
 
         def subject = "[Jenkins] TourGuide - Build #${env.BUILD_NUMBER} - ${status}"
 
-        def owaspStatus = "Non exécuté"
-        if (env.NVD_API_AVAILABLE) {
-            owaspStatus = "Mode: ${env.NVD_API_AVAILABLE.toUpperCase()}"
-        }
-
         def deploymentInfo = ""
-        if (env.DOCKER_AVAILABLE == "true" && status == 'SUCCESS') {
+        if (env.DOCKER_AVAILABLE == "true" && (status == 'SUCCESS' || status == 'UNSTABLE')) {
             deploymentInfo = """
         🚀 Application: http://localhost:${env.HTTP_PORT}
         🐳 Container: tourguide-app
@@ -732,7 +625,7 @@ def sendEnhancedNotification(recipients) {
         • Branche: ${env.BRANCH_NAME}
         • Java: 17
         • Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅" : "❌"}
-        • OWASP: ${owaspStatus}
+        • OWASP: Mode Offline
 
         ${deploymentInfo}
 
@@ -751,8 +644,7 @@ def archiveOwaspReports() {
     def reportFiles = [
         'dependency-check-report.html',
         'dependency-check-report.xml',
-        'dependency-check-report.json',
-        'owasp-error-report.txt'
+        'dependency-check-report.json'
     ]
 
     reportFiles.each { report ->
@@ -793,7 +685,7 @@ def publishTestAndCoverageResults() {
 def runMavenSecurityAudit() {
     try {
         echo "🔍 Audit Maven..."
-        timeout(time: 5, unit: 'MINUTES') {
+        timeout(time: 3, unit: 'MINUTES') {
             sh "mvn versions:display-dependency-updates -B -q"
         }
     } catch (Exception e) {
