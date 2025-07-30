@@ -1,16 +1,55 @@
 services:
   tourguide:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
+        VCS_REF: ${VCS_REF:-unknown}
+        BUILD_NUMBER: ${BUILD_NUMBER:-dev}
     container_name: tourguide-app
     ports:
-      - "8082:8080"
-    env_file: .env.tourguide
+      - "${HTTP_PORT:-8082}:8080"  # Port dynamique basé sur la branche
+    env_file:
+      - .env
+    environment:
+      - JAVA_OPTS=-Xmx512m -Xms256m -XX:+UseContainerSupport
+      - SERVER_PORT=8080
     networks:
-      - ci-network
+      - tourguide-network
     restart: unless-stopped
 
-  #Pas de depends_on sur Jenkins/SonarQube car ils sont externes
+    # Health check au niveau Docker Compose
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+    # Limites de ressources
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.5'
+
+    # Logs configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
-  ci-network:
-    external: true
+  tourguide-network:
+    driver: bridge
+    name: tourguide-network
+
+# Volumes pour persistance (si nécessaire)
+volumes:
+  app-logs:
+    driver: local
