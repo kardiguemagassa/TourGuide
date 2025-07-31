@@ -68,16 +68,6 @@ pipeline {
         PATH = "/usr/local/bin:/usr/bin:/bin:${env.PATH}"
     }
 
-// voir toutes les variables disponibles en ajoutant dans ton Jenkinsfile :
-    stage('Show env') {
-        steps {
-            script {
-                sh 'printenv'   // Linux
-            }
-        }
-    }
-
-
     stages {
         stage('Checkout & Setup') {
             steps {
@@ -86,6 +76,15 @@ pipeline {
                     validateEnvironment()
                     env.DOCKER_AVAILABLE = checkDockerAvailability()
                     displayBuildInfo(config)
+                }
+            }
+        }
+
+        // voir toutes les variables disponibles en ajoutant dans ton Jenkinsfile :
+        stage('Show env') {
+            steps {
+                script {
+                    sh 'printenv'   // Linux
                 }
             }
         }
