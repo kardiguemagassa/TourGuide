@@ -1,3 +1,5 @@
+version: '3.9'
+
 services:
   tourguide:
     build:
@@ -7,9 +9,9 @@ services:
         BUILD_DATE: ${BUILD_DATE:-2025-07-31T11:00:00Z}
         VCS_REF: ${VCS_REF:-unknown}
         BUILD_NUMBER: ${BUILD_NUMBER:-dev}
-    container_name: tourguide-app
+    container_name: tourguide-app-${BRANCH_NAME:-local}-${BUILD_NUMBER:-dev}
     ports:
-      - "${HTTP_PORT:-8081}:8080"  # Port dynamique basé sur la branche
+      - "${HTTP_PORT:-8081}:8080"
     environment:
       - JAVA_OPTS=${JAVA_OPTS:-"-Xmx512m -Xms256m -XX:+UseContainerSupport"}
       - SERVER_PORT=8080
@@ -19,7 +21,6 @@ services:
       - tourguide-network
     restart: unless-stopped
 
-    # Health check au niveau Docker Compose
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
       interval: 30s
@@ -27,7 +28,6 @@ services:
       retries: 5
       start_period: 60s
 
-    # Limites de ressources
     deploy:
       resources:
         limits:
@@ -37,7 +37,6 @@ services:
           memory: 256M
           cpus: '0.5'
 
-    # Logs configuration
     logging:
       driver: "json-file"
       options:
@@ -46,10 +45,8 @@ services:
 
 networks:
   tourguide-network:
-    driver: bridge
-    name: ${NETWORK_NAME:-tourguide-network}
+    external: true
 
-# Volumes pour persistance (si nécessaire)
 volumes:
   app-logs:
     driver: local
