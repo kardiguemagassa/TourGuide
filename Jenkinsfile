@@ -18,7 +18,7 @@ def config = [
         qualityGate: 2,
         deployment: 5,
         sonarAnalysis: 10,
-        owaspCheck: 8  // Réduit pour éviter les timeouts
+        owaspCheck: 8
     ],
     ports: [
         master: '8082',
@@ -30,13 +30,13 @@ def config = [
         develop: 'uat',
         default: 'dev'
     ],
-    // Configuration OWASP avec mode offline par défaut
+    // Configuration OWASP simplifiée - SANS fichier de suppression
     owasp: [
         enabled: true,
-        preferOfflineMode: true,  // CHANGEMENT: Mode offline par défaut
-        maxRetries: 1,           // CHANGEMENT: Moins de retries
-        cvssThreshold: 9.0,      // CHANGEMENT: Seuil plus élevé
-        suppressionFile: "suppressions.xml"  // AJOUT: Fichier de suppression
+        preferOfflineMode: true,
+        maxRetries: 1,
+        cvssThreshold: 9.0
+        // suppressionFile retiré pour éviter les erreurs
     ]
 ]
 
@@ -66,6 +66,8 @@ pipeline {
         CONTAINER_TAG = "${getTag(env.BUILD_NUMBER, env.BRANCH_NAME)}"
         SONAR_PROJECT_KEY = "${getSonarProjectKey(env.BRANCH_NAME, config.sonar)}"
         MAVEN_OPTS = "-Dmaven.repo.local=${WORKSPACE}/.m2/repository -Xmx1024m"
+        // PATH amélioré pour Docker
+        PATH = "/usr/local/bin:/usr/bin:/bin:${env.PATH}"
     }
 
     stages {
@@ -284,27 +286,148 @@ pipeline {
 }
 
 // =============================================================================
-// FONCTION OWASP SIMPLIFIÉE ET FIABLE
+// FONCTION DOCKER AVAILABILITY AMÉLIORÉE
+// =============================================================================
+
+def checkDockerAvailability() {
+    try {
+        echo "🐳 Vérification de Docker..."
+
+        // Essayer plusieurs emplacements Docker courants
+        def dockerPaths = [
+            '/usr/bin/docker',
+            '/usr/local/bin/docker',
+            '/opt/homebrew/bin/docker',
+            'docker'  // Dans le PATH
+        ]
+
+        def dockerFound = false
+        def dockerPath = ""
+
+        // Chercher Docker
+        for (path in dockerPaths) {
+            try {
+                def result = sh(script: "command -v ${path} 2>/dev/null || echo 'not-found'", returnStdout: true).trim()
+                if (result != 'not-found' && result != '') {
+                    dockerFound = true
+                    dockerPath = result
+                    echo "✅ Docker trouvé à: ${dockerPath}"
+                    break
+                }
+            } catch (Exception e) {
+                // Continuer la recherche
+            }
+        }
+
+        if (!dockerFound) {
+            echo "❌ Docker non trouvé dans les emplacements standards"
+            echo "🔍 Vérification de l'installation Docker..."
+
+            // Essayer d'installer Docker (si possible)
+            try {
+                sh '''
+                    if command -v apt-get >/dev/null 2>&1; then
+                        echo "📦 Installation Docker via apt..."
+                        sudo apt-get update -y
+                        sudo apt-get install -y docker.io docker-compose
+                    elif command -v yum >/dev/null 2>&1; then
+                        echo "📦 Installation Docker via yum..."
+                        sudo yum install -y docker docker-compose
+                    elif command -v brew >/dev/null 2>&1; then
+                        echo "📦 Installation Docker via brew..."
+                        brew install docker docker-compose
+                    else
+                        echo "⚠️ Gestionnaire de paquets non supporté"
+                    fi
+                '''
+
+                // Re-vérifier après installation
+                def result = sh(script: "command -v docker 2>/dev/null || echo 'not-found'", returnStdout: true).trim()
+                if (result != 'not-found') {
+                    dockerFound = true
+                    dockerPath = result
+                }
+            } catch (Exception e) {
+                echo "❌ Impossible d'installer Docker automatiquement: ${e.getMessage()}"
+            }
+        }
+
+        if (dockerFound) {
+            // Vérifier que Docker daemon fonctionne
+            try {
+                sh "${dockerPath} --version"
+                def daemonCheck = sh(script: "${dockerPath} info >/dev/null 2>&1", returnStatus: true)
+
+                if (daemonCheck == 0) {
+                    echo "✅ Docker daemon actif"
+
+                    // Vérifier Docker Compose
+                    try {
+                        def composeCheck = sh(script: "docker-compose --version || docker compose --version", returnStatus: true)
+                        if (composeCheck == 0) {
+                            echo "✅ Docker Compose disponible"
+                            return "true"
+                        } else {
+                            echo "⚠️ Docker Compose non disponible"
+                            return "false"
+                        }
+                    } catch (Exception e) {
+                        echo "⚠️ Erreur vérification Docker Compose: ${e.getMessage()}"
+                        return "false"
+                    }
+                } else {
+                    echo "❌ Docker daemon non actif - tentative de démarrage..."
+                    try {
+                        // Essayer de démarrer Docker
+                        sh "sudo systemctl start docker || sudo service docker start || true"
+                        sleep(5)
+
+                        def retryCheck = sh(script: "${dockerPath} info >/dev/null 2>&1", returnStatus: true)
+                        if (retryCheck == 0) {
+                            echo "✅ Docker daemon démarré avec succès"
+                            return "true"
+                        } else {
+                            echo "❌ Impossible de démarrer Docker daemon"
+                            return "false"
+                        }
+                    } catch (Exception e) {
+                        echo "❌ Erreur démarrage Docker: ${e.getMessage()}"
+                        return "false"
+                    }
+                }
+            } catch (Exception e) {
+                echo "❌ Erreur vérification Docker: ${e.getMessage()}"
+                return "false"
+            }
+        } else {
+            echo "❌ Docker non disponible"
+            echo """
+            💡 Solutions possibles:
+            1. Installer Docker: curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh
+            2. Ajouter l'utilisateur Jenkins au groupe docker: sudo usermod -aG docker jenkins
+            3. Redémarrer le service Jenkins: sudo systemctl restart jenkins
+            4. Vérifier les permissions: ls -la /var/run/docker.sock
+            """
+            return "false"
+        }
+
+    } catch (Exception e) {
+        echo "❌ Erreur vérification Docker: ${e.getMessage()}"
+        return "false"
+    }
+}
+
+// =============================================================================
+// FONCTION OWASP SIMPLIFIÉE SANS FICHIER DE SUPPRESSION
 // =============================================================================
 
 def runOwaspDependencyCheck(config) {
     try {
-        echo "🛡️ OWASP Dependency Check - Mode Offline Robuste"
+        echo "🛡️ OWASP Dependency Check - Mode Offline Sans Suppression"
 
         // Nettoyer les anciennes données
         sh "rm -rf ${WORKSPACE}/owasp-data || true"
         sh "mkdir -p ${WORKSPACE}/owasp-data"
-
-        // Vérifier si le fichier de suppression existe
-        def suppressionFile = config.owasp.suppressionFile
-        def suppressionParam = ""
-
-        if (fileExists(suppressionFile)) {
-            suppressionParam = "-DsuppressionFile=${suppressionFile}"
-            echo "✅ Utilisation du fichier de suppression: ${suppressionFile}"
-        } else {
-            echo "⚠️ Fichier de suppression non trouvé: ${suppressionFile}"
-        }
 
         timeout(time: config.timeouts.owaspCheck, unit: 'MINUTES') {
             def exitCode = sh(script: """
@@ -316,7 +439,6 @@ def runOwaspDependencyCheck(config) {
                     -DfailOnError=false \
                     -Dformat=HTML,XML \
                     -DprettyPrint=true \
-                    ${suppressionParam} \
                     -DretireJsAnalyzerEnabled=false \
                     -DnodeAnalyzerEnabled=false \
                     -DossindexAnalyzerEnabled=false \
@@ -388,7 +510,7 @@ def handleOwaspResult(exitCode) {
 }
 
 // =============================================================================
-// FONCTION BUILD DOCKER MANQUANTE
+// FONCTION BUILD DOCKER AMÉLIORÉE
 // =============================================================================
 
 def buildDockerImage(config) {
@@ -418,7 +540,7 @@ def buildDockerImage(config) {
 }
 
 // =============================================================================
-// FONCTIONS UTILITAIRES AMÉLIORÉES
+// FONCTIONS UTILITAIRES CONSERVÉES
 // =============================================================================
 
 def validateEnvironment() {
@@ -446,41 +568,6 @@ def validateEnvironment() {
         if (!fileExists(file)) {
             error "❌ Fichier/dossier critique manquant: ${file}"
         }
-    }
-}
-
-def checkDockerAvailability() {
-    try {
-        def result = sh(
-            script: '''
-                if command -v docker >/dev/null 2>&1; then
-                    if docker info >/dev/null 2>&1; then
-                        if command -v docker-compose >/dev/null 2>&1; then
-                            echo "true"
-                        else
-                            echo "false"
-                        fi
-                    else
-                        echo "false"
-                    fi
-                else
-                    echo "false"
-                fi
-            ''',
-            returnStdout: true
-        ).trim()
-
-        if (result == "true") {
-            echo "🐳 Docker et Docker Compose disponibles"
-            sh 'docker --version && docker-compose --version'
-        } else {
-            echo "⚠️ Docker ou Docker Compose indisponible"
-        }
-
-        return result
-    } catch (Exception e) {
-        echo "❌ Erreur vérification Docker: ${e.getMessage()}"
-        return "false"
     }
 }
 
@@ -596,8 +683,7 @@ def displayBuildInfo(config) {
      Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Disponible" : "⚠️ Indisponible"}
      Port: ${env.HTTP_PORT}
      Tag: ${env.CONTAINER_TAG}
-     OWASP: Mode Offline Robuste
-     Suppression: ${config.owasp.suppressionFile}
+     OWASP: Mode Offline (Sans Suppression)
     ================================================================================
     """
 }
