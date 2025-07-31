@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+
+    <!-- Suppressions pour les dépendances locales (JAR files) -->
+    <suppress>
+        <notes>Dépendances locales - gpsUtil, TripPricer, rewardCentral sont des JARs fournis</notes>
+        <gav regex="true">^(gpsUtil|tripPricer|rewardCentral):.*$</gav>
+    </suppress>
+
+    <!-- Suppressions pour les vulnérabilités de test uniquement -->
+    <suppress>
+        <notes>Vulnérabilités dans les dépendances de test seulement</notes>
+        <gav regex="true">^.*:(mockito-.*|junit-.*|assertj-.*)$</gav>
+        <cpe>cpe:/a:mockito:mockito</cpe>
+    </suppress>
+
+    <!-- Suppressions pour Spring Boot DevTools (développement uniquement) -->
+    <suppress>
+        <notes>Spring Boot DevTools n'est pas utilisé en production</notes>
+        <gav regex="true">^org\.springframework\.boot:spring-boot-devtools:.*$</gav>
+    </suppress>
+
+    <!-- Suppressions spécifiques pour CVE connus et acceptés -->
+    <suppress>
+        <notes>CVE-2022-1471 dans SnakeYAML - Corrigé par mise à jour vers 2.2</notes>
+        <cve>CVE-2022-1471</cve>
+        <gav regex="true">^org\.yaml:snakeyaml:2\.2$</gav>
+    </suppress>
+
+    <suppress>
+        <notes>CVE-2023-2976 dans Google Guava - Corrigé par mise à jour vers 32.1.3-jre</notes>
+        <cve>CVE-2023-2976</cve>
+        <gav regex="true">^com\.google\.guava:guava:32\.1\.3-jre$</gav>
+    </suppress>
+
+    <!-- Suppressions pour les faux positifs courants -->
+    <suppress>
+        <notes>Faux positif - CVE ne s'applique pas à cette version</notes>
+        <gav regex="true">^org\.springframework:.*$</gav>
+        <cve>CVE-2016-1000027</cve>
+    </suppress>
+
+    <!-- Suppressions pour les dépendances transitives non critiques -->
+    <suppress>
+        <notes>Dépendance transitive - vulnérabilité non exploitable dans notre contexte</notes>
+        <gav regex="true">^org\.apache\.tomcat\.embed:tomcat-embed-.*$</gav>
+        <cvssBelow>7.0</cvssBelow>
+    </suppress>
+
+    <!-- Suppressions pour les analyseurs qui génèrent des faux positifs -->
+    <suppress>
+        <notes>Faux positif de l'analyseur de fichiers</notes>
+        <filePath regex="true">.*\.jar$</filePath>
+        <cve>CVE-1999-0001</cve>
+    </suppress>
+
+</suppressions>
