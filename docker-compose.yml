@@ -1,4 +1,5 @@
-version: '3.9'
+# Docker Compose pour TourGuide Application
+# Suppression du "version" obsolète
 
 services:
   tourguide:
@@ -45,7 +46,8 @@ services:
 
 networks:
   tourguide-network:
-    external: true
+    driver: bridge
+    name: tourguide-network
 
 volumes:
   app-logs:

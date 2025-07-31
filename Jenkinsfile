@@ -2,6 +2,7 @@
 def config = [
     emailRecipients: "magassakara@gmail.com",
     containerName: "tourguide-app",
+    serviceName: "tourguide", // ⚠️ NOM DU SERVICE DANS DOCKER-COMPOSE
     dockerRegistry: "docker.io",
     sonarProjectKey: "tourguide",
     sonar: [
@@ -30,13 +31,11 @@ def config = [
         develop: 'uat',
         default: 'dev'
     ],
-    // Configuration OWASP simplifiée - SANS fichier de suppression
     owasp: [
         enabled: true,
         preferOfflineMode: true,
         maxRetries: 1,
         cvssThreshold: 9.0
-        // suppressionFile retiré pour éviter les erreurs
     ]
 ]
 
@@ -66,7 +65,6 @@ pipeline {
         CONTAINER_TAG = "${getTag(env.BUILD_NUMBER, env.BRANCH_NAME)}"
         SONAR_PROJECT_KEY = "${getSonarProjectKey(env.BRANCH_NAME, config.sonar)}"
         MAVEN_OPTS = "-Dmaven.repo.local=${WORKSPACE}/.m2/repository -Xmx1024m"
-        // PATH amélioré pour Docker
         PATH = "/usr/local/bin:/usr/bin:/bin:${env.PATH}"
     }
 
@@ -293,18 +291,16 @@ def checkDockerAvailability() {
     try {
         echo "🐳 Vérification de Docker..."
 
-        // Essayer plusieurs emplacements Docker courants
         def dockerPaths = [
             '/usr/bin/docker',
             '/usr/local/bin/docker',
             '/opt/homebrew/bin/docker',
-            'docker'  // Dans le PATH
+            'docker'
         ]
 
         def dockerFound = false
         def dockerPath = ""
 
-        // Chercher Docker
         for (path in dockerPaths) {
             try {
                 def result = sh(script: "command -v ${path} 2>/dev/null || echo 'not-found'", returnStdout: true).trim()
@@ -323,7 +319,6 @@ def checkDockerAvailability() {
             echo "❌ Docker non trouvé dans les emplacements standards"
             echo "🔍 Vérification de l'installation Docker..."
 
-            // Essayer d'installer Docker (si possible)
             try {
                 sh '''
                     if command -v apt-get >/dev/null 2>&1; then
@@ -341,7 +336,6 @@ def checkDockerAvailability() {
                     fi
                 '''
 
-                // Re-vérifier après installation
                 def result = sh(script: "command -v docker 2>/dev/null || echo 'not-found'", returnStdout: true).trim()
                 if (result != 'not-found') {
                     dockerFound = true
@@ -353,7 +347,6 @@ def checkDockerAvailability() {
         }
 
         if (dockerFound) {
-            // Vérifier que Docker daemon fonctionne
             try {
                 sh "${dockerPath} --version"
                 def daemonCheck = sh(script: "${dockerPath} info >/dev/null 2>&1", returnStatus: true)
@@ -361,7 +354,6 @@ def checkDockerAvailability() {
                 if (daemonCheck == 0) {
                     echo "✅ Docker daemon actif"
 
-                    // Vérifier Docker Compose
                     try {
                         def composeCheck = sh(script: "docker-compose --version || docker compose --version", returnStatus: true)
                         if (composeCheck == 0) {
@@ -378,7 +370,6 @@ def checkDockerAvailability() {
                 } else {
                     echo "❌ Docker daemon non actif - tentative de démarrage..."
                     try {
-                        // Essayer de démarrer Docker
                         sh "sudo systemctl start docker || sudo service docker start || true"
                         sleep(5)
 
@@ -425,7 +416,6 @@ def runOwaspDependencyCheck(config) {
     try {
         echo "🛡️ OWASP Dependency Check - Mode Offline Sans Suppression"
 
-        // Nettoyer les anciennes données
         sh "rm -rf ${WORKSPACE}/owasp-data || true"
         sh "mkdir -p ${WORKSPACE}/owasp-data"
 
@@ -453,7 +443,6 @@ def runOwaspDependencyCheck(config) {
     } catch (Exception e) {
         echo "🚨 Erreur OWASP Dependency Check: ${e.getMessage()}"
 
-        // Créer un rapport d'erreur minimal
         sh """
             mkdir -p target
             cat > target/dependency-check-report.html << 'EOF'
@@ -529,7 +518,6 @@ def buildDockerImage(config) {
 
         echo "✅ Image Docker construite: ${imageName}"
 
-        // Tag pour latest si c'est master
         if (env.BRANCH_NAME == 'master') {
             sh "docker tag ${imageName} ${config.containerName}:latest"
         }
@@ -546,23 +534,19 @@ def buildDockerImage(config) {
 def validateEnvironment() {
     echo "🔍 Validation de l'environnement..."
 
-    // Vérification Java
     sh """
         java -version
         echo "JAVA_HOME: \$JAVA_HOME"
     """
 
-    // Vérification Maven
     sh """
         mvn -version
     """
 
-    // Vérification de l'espace disque
     sh """
         df -h . | tail -1 | awk '{print "💾 Espace disque: " \$4 " disponible (" \$5 " utilisé)"}'
     """
 
-    // Vérification des fichiers critiques
     def criticalFiles = ['pom.xml', 'src/main/java']
     criticalFiles.each { file ->
         if (!fileExists(file)) {
@@ -598,21 +582,17 @@ def deployWithDockerCompose(config) {
     try {
         echo "🐳 Déploiement avec Docker Compose..."
 
-        // Vérification des fichiers requis
         if (!fileExists('docker-compose.yml')) {
             error "❌ Fichier docker-compose.yml introuvable"
         }
 
-        // Créer le fichier .env s'il n'existe pas
         createEnvFile()
 
-        // Arrêt et suppression des anciens conteneurs
         sh """
             docker-compose down --remove-orphans 2>/dev/null || true
             docker system prune -f || true
         """
 
-        // Construction et démarrage avec variables d'environnement
         sh """
             export HTTP_PORT=${env.HTTP_PORT}
             export BUILD_NUMBER=${env.BUILD_NUMBER}
@@ -623,32 +603,29 @@ def deployWithDockerCompose(config) {
 
         echo "✅ Application déployée avec Docker Compose"
 
-        // Attendre un peu pour que les conteneurs démarrent
         sleep(10)
 
-        // Afficher les conteneurs actifs
         sh "docker-compose ps"
 
-        // Afficher les logs récents
-        sh "docker-compose logs --tail 20 tourguide || true"
+        sh "docker-compose logs --tail 20 ${config.serviceName} || true"
 
     } catch (Exception e) {
-        // Afficher les logs en cas d'erreur
-        sh "docker-compose logs tourguide --tail 50 || true"
+        sh "docker-compose logs ${config.serviceName} --tail 50 || true"
         error "❌ Échec du déploiement Docker Compose: ${e.getMessage()}"
     }
 }
 
+// ⚠️ FONCTION HEALTH CHECK CORRIGÉE
 def performHealthCheck(config) {
     try {
         echo "🏥 Health check de l'application..."
 
-        // Attendre que le conteneur soit prêt
+        // ✅ Utilisation du bon nom de service
         timeout(time: 3, unit: 'MINUTES') {
             waitUntil {
                 script {
                     def status = sh(
-                        script: "docker-compose ps -q ${config.containerName} | xargs docker inspect -f '{{.State.Status}}' 2>/dev/null || echo 'not-found'",
+                        script: "docker-compose ps -q ${config.serviceName} | xargs docker inspect -f '{{.State.Status}}' 2>/dev/null || echo 'not-found'",
                         returnStdout: true
                     ).trim()
 
@@ -682,7 +659,7 @@ def performHealthCheck(config) {
         echo "✅ Health check réussi"
 
     } catch (Exception e) {
-        sh "docker-compose logs ${config.containerName} --tail 30 || true"
+        sh "docker-compose logs ${config.serviceName} --tail 30 || true"
         error "❌ Health check échoué: ${e.getMessage()}"
     }
 }
@@ -698,6 +675,7 @@ def displayBuildInfo(config) {
      Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Disponible" : "⚠️ Indisponible"}
      Port: ${env.HTTP_PORT}
      Tag: ${env.CONTAINER_TAG}
+     Service: ${config.serviceName}
      OWASP: Mode Offline (Sans Suppression)
     ================================================================================
     """
@@ -840,7 +818,6 @@ def cleanupDockerImages(config) {
     }
 }
 
-// Fonction utilitaire pour créer le fichier .env
 def createEnvFile() {
     echo "📝 Création du fichier .env..."
 
