@@ -2,7 +2,7 @@
 def config = [
     emailRecipients: "magassakara@gmail.com",
     containerName: "tourguide-app",
-    serviceName: "tourguide", // ⚠️ NOM DU SERVICE DANS DOCKER-COMPOSE
+    serviceName: "tourguide",
     dockerRegistry: "docker.io",
     sonarProjectKey: "tourguide",
     sonar: [
@@ -67,6 +67,16 @@ pipeline {
         MAVEN_OPTS = "-Dmaven.repo.local=${WORKSPACE}/.m2/repository -Xmx1024m"
         PATH = "/usr/local/bin:/usr/bin:/bin:${env.PATH}"
     }
+
+// voir toutes les variables disponibles en ajoutant dans ton Jenkinsfile :
+    stage('Show env') {
+        steps {
+            script {
+                sh 'printenv'   // Linux
+            }
+        }
+    }
+
 
     stages {
         stage('Checkout & Setup') {
