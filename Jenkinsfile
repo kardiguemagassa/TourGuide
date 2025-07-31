@@ -603,16 +603,16 @@ def deployWithDockerCompose(config) {
             error "❌ Fichier docker-compose.yml introuvable"
         }
 
-         // Créer le fichier .env s'il n'existe pas
-         createEnvFile()
+        // Créer le fichier .env s'il n'existe pas
+        createEnvFile()
 
         // Arrêt et suppression des anciens conteneurs
         sh """
-            docker-compose down --remove-orphans || true
+            docker-compose down --remove-orphans 2>/dev/null || true
             docker system prune -f || true
         """
 
-        // Construction et démarrage
+        // Construction et démarrage avec variables d'environnement
         sh """
             export HTTP_PORT=${env.HTTP_PORT}
             export BUILD_NUMBER=${env.BUILD_NUMBER}
@@ -633,8 +633,8 @@ def deployWithDockerCompose(config) {
         sh "docker-compose logs --tail 20 tourguide || true"
 
     } catch (Exception e) {
-         // Afficher les logs en cas d'erreur
-         sh "docker-compose logs tourguide --tail 50 || true"
+        // Afficher les logs en cas d'erreur
+        sh "docker-compose logs tourguide --tail 50 || true"
         error "❌ Échec du déploiement Docker Compose: ${e.getMessage()}"
     }
 }
@@ -846,26 +846,26 @@ def createEnvFile() {
 
     sh """
         cat > .env << 'EOF'
-        # Configuration environnement TourGuide
-        BUILD_DATE=\$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-        VCS_REF=${env.BRANCH_NAME}
-        BUILD_NUMBER=${env.BUILD_NUMBER}
+# Configuration environnement TourGuide
+BUILD_DATE=\$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+VCS_REF=${env.BRANCH_NAME}
+BUILD_NUMBER=${env.BUILD_NUMBER}
 
-        # Configuration Application
-        SPRING_ACTIVE_PROFILES=prod
-        JAVA_OPTS=-Xmx512m -Xms256m -XX:+UseContainerSupport
-        SERVER_PORT=8080
+# Configuration Application
+SPRING_ACTIVE_PROFILES=prod
+JAVA_OPTS=-Xmx512m -Xms256m -XX:+UseContainerSupport
+SERVER_PORT=8080
 
-        # Port dynamique
-        HTTP_PORT=${env.HTTP_PORT}
+# Port dynamique
+HTTP_PORT=${env.HTTP_PORT}
 
-        # Configuration réseau
-        NETWORK_NAME=tourguide-network
+# Configuration réseau
+NETWORK_NAME=tourguide-network
 
-        # Configuration logging
-        LOG_LEVEL=INFO
-        LOG_PATH=/opt/app/logs
-        EOF
+# Configuration logging
+LOG_LEVEL=INFO
+LOG_PATH=/opt/app/logs
+EOF
     """
 
     echo "✅ Fichier .env créé avec les variables d'environnement"
