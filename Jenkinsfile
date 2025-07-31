@@ -870,6 +870,9 @@ EOF
 
     echo "✅ Fichier .env créé avec les variables d'environnement"
 }
+
+// Fonctions utilitaires pour la configuration
+String getEnvName(String branchName, Map environments) {
     def branch = branchName?.toLowerCase()
     return environments[branch] ?: environments.default
 }
