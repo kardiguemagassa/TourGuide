@@ -4,17 +4,17 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
+        BUILD_DATE: ${BUILD_DATE:-2025-07-31T11:00:00Z}
         VCS_REF: ${VCS_REF:-unknown}
         BUILD_NUMBER: ${BUILD_NUMBER:-dev}
     container_name: tourguide-app
     ports:
-      - "${HTTP_PORT:-8082}:8080"  # Port dynamique basé sur la branche
-    env_file:
-      - .env
+      - "${HTTP_PORT:-8081}:8080"  # Port dynamique basé sur la branche
     environment:
-      - JAVA_OPTS=-Xmx512m -Xms256m -XX:+UseContainerSupport
+      - JAVA_OPTS=${JAVA_OPTS:-"-Xmx512m -Xms256m -XX:+UseContainerSupport"}
       - SERVER_PORT=8080
+      - SPRING_ACTIVE_PROFILES=${SPRING_ACTIVE_PROFILES:-prod}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     networks:
       - tourguide-network
     restart: unless-stopped
@@ -47,7 +47,7 @@ services:
 networks:
   tourguide-network:
     driver: bridge
-    name: tourguide-network
+    name: ${NETWORK_NAME:-tourguide-network}
 
 # Volumes pour persistance (si nécessaire)
 volumes:

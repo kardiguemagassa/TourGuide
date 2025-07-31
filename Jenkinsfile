@@ -603,23 +603,38 @@ def deployWithDockerCompose(config) {
             error "❌ Fichier docker-compose.yml introuvable"
         }
 
+        // Créer le fichier .env s'il n'existe pas
+        createEnvFile()
+
         // Arrêt et suppression des anciens conteneurs
         sh """
-            docker-compose down --remove-orphans || true
+            docker-compose down --remove-orphans 2>/dev/null || true
             docker system prune -f || true
         """
 
-        // Construction et démarrage
+        // Construction et démarrage avec variables d'environnement
         sh """
+            export HTTP_PORT=${env.HTTP_PORT}
+            export BUILD_NUMBER=${env.BUILD_NUMBER}
+            export BRANCH_NAME=${env.BRANCH_NAME}
+            export CONTAINER_TAG=${env.CONTAINER_TAG}
             docker-compose up -d --build
         """
 
         echo "✅ Application déployée avec Docker Compose"
 
+        // Attendre un peu pour que les conteneurs démarrent
+        sleep(10)
+
         // Afficher les conteneurs actifs
         sh "docker-compose ps"
 
+        // Afficher les logs récents
+        sh "docker-compose logs --tail 20 tourguide || true"
+
     } catch (Exception e) {
+        // Afficher les logs en cas d'erreur
+        sh "docker-compose logs tourguide --tail 50 || true"
         error "❌ Échec du déploiement Docker Compose: ${e.getMessage()}"
     }
 }
@@ -825,8 +840,36 @@ def cleanupDockerImages(config) {
     }
 }
 
-// Fonctions utilitaires pour la configuration
-String getEnvName(String branchName, Map environments) {
+// Fonction utilitaire pour créer le fichier .env
+def createEnvFile() {
+    echo "📝 Création du fichier .env..."
+
+    sh """
+        cat > .env << 'EOF'
+# Configuration environnement TourGuide
+BUILD_DATE=\$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+VCS_REF=${env.BRANCH_NAME}
+BUILD_NUMBER=${env.BUILD_NUMBER}
+
+# Configuration Application
+SPRING_ACTIVE_PROFILES=prod
+JAVA_OPTS=-Xmx512m -Xms256m -XX:+UseContainerSupport
+SERVER_PORT=8080
+
+# Port dynamique
+HTTP_PORT=${env.HTTP_PORT}
+
+# Configuration réseau
+NETWORK_NAME=tourguide-network
+
+# Configuration logging
+LOG_LEVEL=INFO
+LOG_PATH=/opt/app/logs
+EOF
+    """
+
+    echo "✅ Fichier .env créé avec les variables d'environnement"
+}
     def branch = branchName?.toLowerCase()
     return environments[branch] ?: environments.default
 }
