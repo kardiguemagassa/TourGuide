@@ -22,9 +22,9 @@ def config = [
         owaspCheck: 8
     ],
     ports: [
-        master: '8082',
-        develop: '8081',
-        default: '8080'
+        master: '8092',
+        develop: '8091',
+        default: '8090'
     ],
     environments: [
         master: 'prod',
