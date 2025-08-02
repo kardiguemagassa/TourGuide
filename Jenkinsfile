@@ -19,7 +19,7 @@ def config = [
         qualityGate: 2,
         deployment: 5,
         sonarAnalysis: 10,
-        owaspCheck: 15  // Augmenté pour permettre le téléchargement
+        owaspCheck: 15  // Augmenté pour OWASP
     ],
     ports: [
         master: '8092',
@@ -315,7 +315,7 @@ pipeline {
 }
 
 // =============================================================================
-// FONCTION COVERAGE REPORT CORRIGÉE
+// FONCTION COVERAGE REPORT CORRIGÉE - 3 RAPPORTS DISTINCTS
 // =============================================================================
 
 def publishTestAndCoverageResults() {
@@ -353,7 +353,7 @@ def publishTestAndCoverageResults() {
         echo "⚠️ Erreur publication JaCoCo HTML: ${e.getMessage()}"
     }
 
-    // 3. Publication du Coverage Report séparé
+    // 3. Publication du Coverage Report séparé (DISTINCT du JaCoCo)
     try {
         if (fileExists('target/site/jacoco/jacoco.xml')) {
             // Publication HTML alternative pour Coverage Report
@@ -583,7 +583,7 @@ EOF
 }
 
 // =============================================================================
-// FONCTION PUBLICATION RAPPORTS OWASP
+// FONCTION PUBLICATION RAPPORTS OWASP (CORRIGÉE)
 // =============================================================================
 
 def publishOwaspReports() {
@@ -612,7 +612,7 @@ def publishOwaspReports() {
         }
     }
 
-    // Publication du rapport HTML OWASP
+    // Publication du rapport HTML OWASP (NOM EXACT COMME DANS FEATURE_CI)
     try {
         if (fileExists('target/dependency-check-report.html')) {
             publishHTML([
@@ -640,13 +640,13 @@ def publishOwaspReports() {
 }
 
 // =============================================================================
-// FONCTION PUBLICATION FINALE DE TOUS LES RAPPORTS
+// FONCTION PUBLICATION FINALE DE TOUS LES RAPPORTS (COMME FEATURE_CI)
 // =============================================================================
 
 def publishFinalReports() {
     echo "📊 Publication finale de tous les rapports..."
 
-    // Publication du Coverage Report dédié
+    // Publication du Coverage Report dédié (GARANTIT QUE LE 3ème RAPPORT APPARAÎT)
     try {
         if (fileExists('target/site/jacoco/index.html')) {
             publishHTML([
@@ -676,7 +676,7 @@ def publishFinalReports() {
 }
 
 // =============================================================================
-// AUTRES FONCTIONS (inchangées)
+// AUTRES FONCTIONS (inchangées de la version feature_ci)
 // =============================================================================
 
 def checkDockerAvailability() {
@@ -951,7 +951,7 @@ def displayBuildInfo(config) {
      • SonarQube: ${config.sonar.communityEdition ? "Community Edition" : "Enterprise"}
 
      📊 Rapports activés:
-     • Coverage Report: ✅ JaCoCo
+     • Coverage Report: ✅ JaCoCo (3 rapports distincts)
      • Security Report: ✅ OWASP Dependency Check
      • Quality Gate: ✅ SonarQube
 
