@@ -1,5 +1,5 @@
 server:
-  port: 8080  # Port interne du conteneur
+  port: 8092
 
 logging:
   level:
@@ -7,14 +7,14 @@ logging:
       openclassrooms:
         tourguide: DEBUG
     org:
-      springframework: DEBUG
+      springframework: INFO
     root: INFO
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,env
+        include: health,info,metrics
   endpoint:
     health:
       show-details: always

@@ -10,10 +10,10 @@ services:
         BUILD_NUMBER: ${BUILD_NUMBER:-dev}
     container_name: tourguide-app-${BRANCH_NAME:-local}-${BUILD_NUMBER:-dev}
     ports:
-      - "${HTTP_PORT}:8080"
+      - "${HTTP_PORT:-8090}:8080"  # Port externe:interne
     environment:
       - JAVA_OPTS=${JAVA_OPTS:-"-Xmx512m -Xms256m -XX:+UseContainerSupport"}
-      - SERVER_PORT=8080
+      - SERVER_PORT=8080  # Port interne fixe
       - SPRING_ACTIVE_PROFILES=${SPRING_ACTIVE_PROFILES:-prod}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     networks:
