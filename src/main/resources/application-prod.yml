@@ -1,5 +1,5 @@
 server:
-  port: 8092
+  port: ${SERVER_PORT:8092}  # Utiliser la variable d'environnement
 
 logging:
   level:
@@ -11,6 +11,8 @@ logging:
     root: INFO
 
 management:
+  server:
+    port: ${SERVER_PORT:8092}  # Même port que l'application
   endpoints:
     web:
       exposure:

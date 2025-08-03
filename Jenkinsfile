@@ -229,7 +229,7 @@ pipeline {
             steps {
                 script {
                     validateDockerPrerequisites()
-                    buildDockerImage(config)
+                    buildDockerImageEnhanced(config)
                 }
             }
         }
@@ -268,6 +268,19 @@ pipeline {
             steps {
                 script {
                     performHealthCheck(config)
+                }
+            }
+        }
+
+        stage('Docker Diagnosis') {
+            when {
+                expression {
+                    return env.DOCKER_AVAILABLE == "true" && currentBuild.result in ['FAILURE', 'UNSTABLE']
+                }
+            }
+            steps {
+                script {
+                    diagnosisDockerIssues()
                 }
             }
         }
@@ -355,7 +368,7 @@ def publishTestAndCoverageResults() {
 }
 
 // =============================================================================
-// FONCTION OWASP AVEC NVD API KEY (COMME DANS LA BRANCHE FEATURE)
+// FONCTION OWASP AVEC NVD API KEY
 // =============================================================================
 
 def runOwaspDependencyCheckWithNVD(config) {
@@ -487,7 +500,110 @@ def archiveOwaspReports() {
 }
 
 // =============================================================================
-// FONCTIONS CONSERVÉES ET ADAPTÉES
+// FONCTION CREATEENVFILE CORRIGÉE POUR GESTION DES PORTS
+// =============================================================================
+
+def createEnvFile() {
+    echo "📝 Création du fichier .env pour Docker Compose..."
+
+    // Déterminer le port interne selon l'environnement
+    def internalPort = "8080"  // Défaut
+    switch(env.ENV_NAME) {
+        case 'prod':
+            internalPort = "8092"
+            break
+        case 'uat':
+            internalPort = "8091"
+            break
+        case 'dev':
+        default:
+            internalPort = "8090"
+            break
+    }
+
+    echo "🔧 Configuration ports:"
+    echo "  - Environnement: ${env.ENV_NAME}"
+    echo "  - Port externe: ${env.HTTP_PORT}"
+    echo "  - Port interne: ${internalPort}"
+
+    sh """
+        cat > .env << 'EOF'
+# Configuration environnement TourGuide - Build #${env.BUILD_NUMBER}
+# Généré automatiquement le \$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+# Informations du build Jenkins
+BUILD_DATE=\$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+VCS_REF=${env.BRANCH_NAME}
+BUILD_NUMBER=${env.BUILD_NUMBER}
+CONTAINER_TAG=${env.CONTAINER_TAG}
+
+# Configuration Application Spring Boot
+SPRING_PROFILES_ACTIVE=${env.ENV_NAME}
+JAVA_OPTS=-Xmx512m -Xms256m -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0
+
+# CORRECTION: Configuration des ports pour éviter conflit avec Jenkins
+HTTP_PORT=${env.HTTP_PORT}
+INTERNAL_PORT=${internalPort}
+SERVER_PORT=${internalPort}
+
+# Configuration Docker
+CONTAINER_NAME=${config.containerName}
+SERVICE_NAME=${config.serviceName}
+IMAGE_NAME=${config.containerName}:${env.CONTAINER_TAG}
+
+# Configuration réseau
+NETWORK_NAME=tourguide-network
+
+# Configuration logging
+LOG_LEVEL=INFO
+LOG_PATH=/opt/app/logs
+LOGGING_FILE_NAME=tourguide.log
+
+# Configuration Actuator
+MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=health,info,metrics,prometheus
+MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS=always
+MANAGEMENT_SERVER_PORT=${internalPort}
+
+# Informations de l'application
+APP_NAME=TourGuide
+APP_VERSION=0.0.1-SNAPSHOT
+APP_ENVIRONMENT=${env.ENV_NAME}
+APP_DESCRIPTION=TourGuide Application - ${env.BRANCH_NAME} branch
+
+# Variables spécifiques à l'environnement
+BRANCH_NAME=${env.BRANCH_NAME}
+ENV_NAME=${env.ENV_NAME}
+
+# Configuration JVM pour le conteneur
+JVM_XMS=256m
+JVM_XMX=512m
+JVM_OPTS=-server -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+
+# Configuration pour éviter les conflits
+STARTUP_DELAY=5
+DEBUG_MODE=false
+EOF
+    """
+
+    echo "✅ Fichier .env créé avec la configuration pour l'environnement ${env.ENV_NAME}"
+
+    # Affichage pour debug
+    sh """
+        echo "📋 Contenu du fichier .env créé:"
+        echo "================================"
+        cat .env
+        echo "================================"
+
+        echo "🔍 Variables d'environnement importantes:"
+        echo "HTTP_PORT (externe): ${env.HTTP_PORT}"
+        echo "INTERNAL_PORT (conteneur): ${internalPort}"
+        echo "ENV_NAME: ${env.ENV_NAME}"
+        echo "BRANCH_NAME: ${env.BRANCH_NAME}"
+    """
+}
+
+// =============================================================================
+// FONCTIONS DOCKER AMÉLIORÉES
 // =============================================================================
 
 def checkDockerAvailability() {
@@ -560,124 +676,304 @@ def checkDockerAvailability() {
     }
 }
 
-def handleOwaspResult(exitCode) {
-    switch(exitCode) {
-        case 0:
-            echo "✅ OWASP: Aucune vulnérabilité critique détectée"
-            break
-        case 1:
-            echo "⚠️ OWASP: Vulnérabilités détectées mais sous le seuil configuré"
-            currentBuild.result = 'UNSTABLE'
-            break
-        default:
-            echo "❌ OWASP: Erreur lors de l'analyse (code: ${exitCode})"
-            currentBuild.result = 'UNSTABLE'
-            break
-    }
-}
-
-def buildDockerImage(config) {
+def buildDockerImageEnhanced(config) {
     try {
-        echo "🐳 Construction de l'image Docker..."
+        echo "🐳 Construction améliorée de l'image Docker..."
 
         def imageName = "${config.containerName}:${env.CONTAINER_TAG}"
+        def latestImageName = "${config.containerName}:latest"
 
+        // Vérification du JAR
+        def jarFiles = findFiles(glob: 'target/*.jar').findAll {
+            it.name.endsWith('.jar') && !it.name.contains('sources') && !it.name.contains('javadoc')
+        }
+
+        if (jarFiles.length == 0) {
+            error "📦 Aucun JAR exécutable trouvé dans target/"
+        }
+
+        def jarFile = jarFiles[0].path
+        echo "📦 JAR utilisé: ${jarFile}"
+
+        // Vérification du Dockerfile
+        if (!fileExists('Dockerfile')) {
+            echo "📝 Création d'un Dockerfile par défaut..."
+            createDefaultDockerfile()
+        }
+
+        // Construction avec logs détaillés
         sh """
+            echo "🔨 Construction de l'image Docker..."
+            echo "Image: ${imageName}"
+            echo "JAR: ${jarFile}"
+
             docker build \
-                --build-arg JAR_FILE=target/*.jar \
-                --build-arg JAVA_OPTS="-Xmx512m -Xms256m" \
+                --build-arg JAR_FILE=${jarFile} \
+                --build-arg JAVA_OPTS="-Xmx512m -Xms256m -XX:+UseContainerSupport" \
+                --build-arg BUILD_NUMBER=${env.BUILD_NUMBER} \
+                --build-arg VCS_REF=${env.BRANCH_NAME} \
+                --label "build.number=${env.BUILD_NUMBER}" \
+                --label "vcs.ref=${env.BRANCH_NAME}" \
+                --label "build.date=\$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+                --progress=plain \
                 -t ${imageName} \
                 .
         """
 
-        echo "✅ Image Docker construite: ${imageName}"
+        // Vérification de la construction
+        sh """
+            echo "✅ Vérification de l'image construite:"
+            docker images ${imageName}
 
+            echo "📊 Détails de l'image:"
+            docker inspect ${imageName} --format='{{.Config.Labels}}'
+        """
+
+        // Tag latest pour master
         if (env.BRANCH_NAME == 'master') {
-            sh "docker tag ${imageName} ${config.containerName}:latest"
+            sh """
+                docker tag ${imageName} ${latestImageName}
+                echo "✅ Tag 'latest' créé pour la branche master"
+            """
         }
 
+        echo "✅ Image Docker construite avec succès: ${imageName}"
+
     } catch (Exception e) {
+        echo "❌ Erreur lors de la construction Docker:"
+        sh """
+            echo "=== LOGS D'ERREUR DOCKER BUILD ==="
+            docker system df
+            docker images | head -5
+        """
         error "❌ Échec de la construction Docker: ${e.getMessage()}"
     }
 }
 
-def validateEnvironment() {
-    echo "🔍 Validation de l'environnement..."
-
+def createDefaultDockerfile() {
     sh """
-        java -version
-        echo "JAVA_HOME: \$JAVA_HOME"
+        cat > Dockerfile << 'EOF'
+# Dockerfile par défaut pour TourGuide
+FROM openjdk:17-jre-slim
+
+# Métadonnées
+LABEL maintainer="TourGuide Team"
+LABEL version="1.0"
+LABEL description="TourGuide Application"
+
+# Variables d'environnement
+ENV JAVA_OPTS=""
+ENV JAR_FILE=""
+
+# Création d'un utilisateur non-root
+RUN groupadd -r tourguide && useradd -r -g tourguide tourguide
+
+# Répertoire de travail
+WORKDIR /opt/app
+
+# Installation des dépendances système
+RUN apt-get update && \\
+    apt-get install -y curl && \\
+    rm -rf /var/lib/apt/lists/*
+
+# Copie du JAR
+ARG JAR_FILE=target/*.jar
+COPY \${JAR_FILE} app.jar
+
+# Création des répertoires et permissions
+RUN mkdir -p /opt/app/logs && \\
+    chown -R tourguide:tourguide /opt/app
+
+# Utilisateur non-root
+USER tourguide
+
+# Port exposé
+EXPOSE 8080 8091 8092
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \\
+    CMD curl -f http://localhost:\${SERVER_PORT:-8080}/actuator/health || exit 1
+
+# Point d'entrée
+ENTRYPOINT ["sh", "-c", "java \$JAVA_OPTS -jar app.jar"]
+EOF
     """
-
-    sh """
-        mvn -version
-    """
-
-    sh """
-        df -h . | tail -1 | awk '{print "💾 Espace disque: " \$4 " disponible (" \$5 " utilisé)"}'
-    """
-
-    def criticalFiles = ['pom.xml', 'src/main/java']
-    criticalFiles.each { file ->
-        if (!fileExists(file)) {
-            error "❌ Fichier/dossier critique manquant: ${file}"
-        }
-    }
-}
-
-def validateDockerPrerequisites() {
-    if (env.DOCKER_AVAILABLE != "true") {
-        error "🐳 Docker non disponible"
-    }
-
-    def requiredFiles = ['Dockerfile']
-    requiredFiles.each { file ->
-        if (!fileExists(file)) {
-            error "📄 Fichier requis manquant: ${file}"
-        }
-    }
-
-    def jarFiles = findFiles(glob: 'target/*.jar').findAll {
-        it.name.endsWith('.jar') && !it.name.contains('sources') && !it.name.contains('javadoc')
-    }
-
-    if (jarFiles.length == 0) {
-        error "📦 Aucun JAR exécutable trouvé"
-    }
-
-    echo "📦 JAR trouvé: ${jarFiles[0].path}"
+    echo "✅ Dockerfile par défaut créé"
 }
 
 def deployWithDockerCompose(config) {
     try {
         echo "🐳 Déploiement avec Docker Compose..."
+        echo "🔧 Configuration déploiement:"
+        echo "  - Branche: ${env.BRANCH_NAME}"
+        echo "  - Environnement: ${env.ENV_NAME}"
+        echo "  - Port externe: ${env.HTTP_PORT}"
+        echo "  - Container tag: ${env.CONTAINER_TAG}"
 
+        // Vérification des prérequis
         if (!fileExists('docker-compose.yml')) {
             error "❌ Fichier docker-compose.yml introuvable"
         }
 
+        // Créer le fichier .env avec la configuration corrigée
         createEnvFile()
 
+        // Vérification qu'aucun processus n'utilise le port
+        echo "🔍 Vérification des ports..."
         sh """
-            docker-compose down --remove-orphans 2>/dev/null || true
-            docker system prune -f || true
+            echo "Vérification du port ${env.HTTP_PORT}:"
+            if netstat -tlnp 2>/dev/null | grep -q ":${env.HTTP_PORT} "; then
+                echo "⚠️ Port ${env.HTTP_PORT} déjà utilisé:"
+                netstat -tlnp | grep ":${env.HTTP_PORT} " || true
+                echo "🛑 Tentative de libération du port..."
+                # Essayer de trouver et arrêter le processus utilisant le port
+                lsof -ti:${env.HTTP_PORT} | xargs kill -9 2>/dev/null || true
+                sleep 2
+            else
+                echo "✅ Port ${env.HTTP_PORT} disponible"
+            fi
         """
 
+        // Arrêt propre des conteneurs existants
+        echo "🛑 Arrêt des conteneurs existants..."
+        sh """
+            # Arrêter tous les conteneurs TourGuide existants
+            docker ps -a --filter "name=tourguide" --format "{{.Names}}" | xargs -r docker rm -f || true
+
+            # Arrêt via docker-compose
+            docker-compose down --remove-orphans 2>/dev/null || true
+
+            # Nettoyage des conteneurs orphelins
+            docker container prune -f || true
+
+            # Attendre que les ports se libèrent
+            sleep 5
+        """
+
+        // Vérification de l'image
+        def imageName = "${config.containerName}:${env.CONTAINER_TAG}"
+        echo "🔍 Vérification de l'image Docker: ${imageName}"
+        sh """
+            if ! docker images ${imageName} --format "table {{.Repository}}:{{.Tag}}" | grep -q "${imageName}"; then
+                echo "❌ Image ${imageName} non trouvée"
+                echo "📋 Images disponibles:"
+                docker images | grep ${config.containerName} || echo "Aucune image ${config.containerName} trouvée"
+                exit 1
+            else
+                echo "✅ Image ${imageName} trouvée"
+            fi
+        """
+
+        // Démarrage avec variables d'environnement explicites
+        echo "🚀 Démarrage des conteneurs..."
         sh """
             export HTTP_PORT=${env.HTTP_PORT}
             export BUILD_NUMBER=${env.BUILD_NUMBER}
             export BRANCH_NAME=${env.BRANCH_NAME}
             export CONTAINER_TAG=${env.CONTAINER_TAG}
-            docker-compose up -d --build
+            export VCS_REF=${env.BRANCH_NAME}
+            export BUILD_DATE=\$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            export SPRING_PROFILES_ACTIVE=${env.ENV_NAME}
+
+            # Affichage du contenu des fichiers pour debug
+            echo "📄 Contenu du docker-compose.yml:"
+            cat docker-compose.yml
+            echo ""
+            echo "📄 Contenu du fichier .env:"
+            cat .env
+            echo ""
+
+            # Démarrage avec rebuild forcé et logs détaillés
+            docker-compose up -d --build --force-recreate --remove-orphans
         """
 
-        echo "✅ Application déployée avec Docker Compose"
-        sleep(10)
-        sh "docker-compose ps"
-        sh "docker-compose logs --tail 20 ${config.serviceName} || true"
+        echo "✅ Conteneurs démarrés"
+
+        // Attente pour laisser le temps aux conteneurs de démarrer
+        echo "⏳ Attente du démarrage des conteneurs (20 secondes)..."
+        sleep(20)
+
+        // Vérification détaillée de l'état
+        echo "🔍 Vérification détaillée de l'état:"
+        sh """
+            echo "=== DOCKER COMPOSE PS ==="
+            docker-compose ps
+
+            echo "=== DOCKER PS (conteneurs TourGuide) ==="
+            docker ps -a --filter "name=tourguide" || echo "Aucun conteneur tourguide trouvé"
+
+            echo "=== PORTS EN ÉCOUTE ==="
+            netstat -tlnp | grep ":${env.HTTP_PORT}" || echo "Port ${env.HTTP_PORT} non en écoute"
+
+            echo "=== LOGS DU SERVICE ${config.serviceName} (dernières 50 lignes) ==="
+            docker-compose logs --tail 50 ${config.serviceName} || true
+        """
+
+        // Vérification finale avec plusieurs tentatives
+        def maxRetries = 3
+        def containerRunning = false
+
+        for (int i = 1; i <= maxRetries; i++) {
+            echo "🔍 Tentative ${i}/${maxRetries} de vérification du conteneur..."
+
+            def containerStatus = sh(
+                script: "docker-compose ps -q ${config.serviceName} | xargs docker inspect -f '{{.State.Status}}' 2>/dev/null || echo 'not-found'",
+                returnStdout: true
+            ).trim()
+
+            echo "📊 État du conteneur (tentative ${i}): ${containerStatus}"
+
+            if (containerStatus == "running") {
+                containerRunning = true
+                break
+            } else {
+                echo "⏳ Conteneur pas encore prêt, attente de 10 secondes..."
+                sleep(10)
+            }
+        }
+
+        if (!containerRunning) {
+            echo "❌ Le conteneur n'est pas en cours d'exécution après ${maxRetries} tentatives"
+            sh """
+                echo "=== LOGS D'ERREUR DÉTAILLÉS ==="
+                docker-compose logs ${config.serviceName} || true
+
+                echo "=== INSPECT DU CONTENEUR ==="
+                docker-compose ps -q ${config.serviceName} | xargs docker inspect || true
+            """
+            error "❌ Échec du démarrage du conteneur"
+        }
+
+        echo "✅ Application déployée avec succès !"
+        echo "🌐 Application accessible sur: http://localhost:${env.HTTP_PORT}"
+        echo "🏥 Health check: http://localhost:${env.HTTP_PORT}/actuator/health"
 
     } catch (Exception e) {
-        sh "docker-compose logs ${config.serviceName} --tail 50 || true"
+        echo "❌ Erreur lors du déploiement:"
+        sh """
+            echo "=== DIAGNOSTIC D'ERREUR COMPLET ==="
+
+            echo "1. Logs du service:"
+            docker-compose logs ${config.serviceName} --tail 100 || true
+
+            echo "2. État des conteneurs:"
+            docker-compose ps || true
+
+            echo "3. Tous les conteneurs Docker:"
+            docker ps -a || true
+
+            echo "4. Ports en écoute:"
+            netstat -tlnp | grep -E ":(809|8080)" || true
+
+            echo "5. Espace disque:"
+            df -h
+
+            echo "6. Mémoire disponible:"
+            free -h
+
+            echo "7. Processus Java:"
+            ps aux | grep java || true
+        """
         error "❌ Échec du déploiement Docker Compose: ${e.getMessage()}"
     }
 }
@@ -728,6 +1024,124 @@ def performHealthCheck(config) {
     }
 }
 
+// =============================================================================
+// FONCTION DE DIAGNOSTIC DOCKER
+// =============================================================================
+
+def diagnosisDockerIssues() {
+    echo "🔍 Diagnostic des problèmes Docker..."
+
+    sh """
+        echo "=== DIAGNOSTIC DOCKER COMPLET ==="
+
+        echo "1. Version Docker:"
+        docker --version || echo "Docker non disponible"
+
+        echo "2. Version Docker Compose:"
+        docker-compose --version || docker compose --version || echo "Docker Compose non disponible"
+
+        echo "3. Espace disque:"
+        df -h
+
+        echo "4. Mémoire disponible:"
+        free -h
+
+        echo "5. Images Docker disponibles:"
+        docker images | head -10
+
+        echo "6. Conteneurs en cours:"
+        docker ps
+
+        echo "7. Tous les conteneurs:"
+        docker ps -a | head -10
+
+        echo "8. Réseaux Docker:"
+        docker network ls
+
+        echo "9. Volumes Docker:"
+        docker volume ls
+
+        echo "10. Fichiers dans le workspace:"
+        ls -la
+
+        echo "11. Contenu du dossier target:"
+        ls -la target/ || echo "Dossier target non trouvé"
+
+        echo "12. Processus Java en cours:"
+        ps aux | grep java || echo "Aucun processus Java"
+
+        echo "13. Ports en écoute:"
+        netstat -tlnp | grep :809 || echo "Aucun port 809x en écoute"
+    """
+}
+
+// =============================================================================
+// AUTRES FONCTIONS UTILITAIRES
+// =============================================================================
+
+def handleOwaspResult(exitCode) {
+    switch(exitCode) {
+        case 0:
+            echo "✅ OWASP: Aucune vulnérabilité critique détectée"
+            break
+        case 1:
+            echo "⚠️ OWASP: Vulnérabilités détectées mais sous le seuil configuré"
+            currentBuild.result = 'UNSTABLE'
+            break
+        default:
+            echo "❌ OWASP: Erreur lors de l'analyse (code: ${exitCode})"
+            currentBuild.result = 'UNSTABLE'
+            break
+    }
+}
+
+def validateEnvironment() {
+    echo "🔍 Validation de l'environnement..."
+
+    sh """
+        java -version
+        echo "JAVA_HOME: \$JAVA_HOME"
+    """
+
+    sh """
+        mvn -version
+    """
+
+    sh """
+        df -h . | tail -1 | awk '{print "💾 Espace disque: " \$4 " disponible (" \$5 " utilisé)"}'
+    """
+
+    def criticalFiles = ['pom.xml', 'src/main/java']
+    criticalFiles.each { file ->
+        if (!fileExists(file)) {
+            error "❌ Fichier/dossier critique manquant: ${file}"
+        }
+    }
+}
+
+def validateDockerPrerequisites() {
+    if (env.DOCKER_AVAILABLE != "true") {
+        error "🐳 Docker non disponible"
+    }
+
+    def requiredFiles = ['Dockerfile']
+    requiredFiles.each { file ->
+        if (!fileExists(file)) {
+            error "📄 Fichier requis manquant: ${file}"
+        }
+    }
+
+    def jarFiles = findFiles(glob: 'target/*.jar').findAll {
+        it.name.endsWith('.jar') && !it.name.contains('sources') && !it.name.contains('javadoc')
+    }
+
+    if (jarFiles.length == 0) {
+        error "📦 Aucun JAR exécutable trouvé"
+    }
+
+    echo "📦 JAR trouvé: ${jarFiles[0].path}"
+}
+
 def displayBuildInfo(config) {
     echo """
     ================================================================================
@@ -735,13 +1149,19 @@ def displayBuildInfo(config) {
     ================================================================================
      Build #: ${env.BUILD_NUMBER}
      Branch: ${env.BRANCH_NAME}
+     Environment: ${env.ENV_NAME}
+     Port externe: ${env.HTTP_PORT}
      Java: 17
      Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Disponible" : "⚠️ Indisponible"}
-     Port: ${env.HTTP_PORT}
      Tag: ${env.CONTAINER_TAG}
      Service: ${config.serviceName}
      OWASP: Avec NVD API Key
      Coverage: JaCoCo Plugin Jenkins natif
+
+     🔧 Configuration des ports:
+     • dev (default) : 8090
+     • uat (develop) : 8091
+     • prod (master) : 8092
     ================================================================================
     """
 }
@@ -751,35 +1171,49 @@ def sendEnhancedNotification(recipients) {
         def status = currentBuild.currentResult ?: 'SUCCESS'
         def statusIcon = ['SUCCESS': '✅', 'FAILURE': '❌', 'UNSTABLE': '⚠️', 'ABORTED': '🛑'][status] ?: '❓'
 
-        def subject = "[Jenkins] TourGuide - Build #${env.BUILD_NUMBER} - ${status}"
+        def subject = "[Jenkins] TourGuide - Build #${env.BUILD_NUMBER} - ${status} (${env.BRANCH_NAME})"
 
         def deploymentInfo = ""
         if (env.DOCKER_AVAILABLE == "true" && (status == 'SUCCESS' || status == 'UNSTABLE')) {
             deploymentInfo = """
-        🚀 Application: http://localhost:${env.HTTP_PORT}
-        🐳 Container: tourguide-app
-        📊 Coverage: ${env.BUILD_URL}jacoco/
-        🛡️ OWASP: ${env.BUILD_URL}OWASP_20Security_20Report/
+        🚀 DÉPLOIEMENT RÉUSSI:
+        • Application: http://localhost:${env.HTTP_PORT}
+        • Health Check: http://localhost:${env.HTTP_PORT}/actuator/health
+        • Environnement: ${env.ENV_NAME}
+        • Container: tourguide-app-${env.BRANCH_NAME}-${env.BUILD_NUMBER}
+
+        📊 RAPPORTS:
+        • Coverage JaCoCo: ${env.BUILD_URL}jacoco/
+        • Coverage Report: ${env.BUILD_URL}JaCoCo_20Coverage_20Report/
+        • Security OWASP: ${env.BUILD_URL}OWASP_20Security_20Report/
         """
         }
 
         def body = """
-        ${statusIcon} Build ${status}
+        ${statusIcon} BUILD ${status} - TourGuide
 
-        📋 Détails:
+        📋 DÉTAILS:
         • Build: #${env.BUILD_NUMBER}
         • Branche: ${env.BRANCH_NAME}
+        • Environnement: ${env.ENV_NAME}
+        • Port: ${env.HTTP_PORT}
         • Java: 17
         • Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅" : "❌"}
-        • OWASP: Avec NVD API
+        • OWASP: Avec NVD API Key
+        • Durée: ${currentBuild.durationString ?: 'N/A'}
 
         ${deploymentInfo}
 
-        🔗 Console: ${env.BUILD_URL}console
+        🔗 LIENS:
+        • Console Jenkins: ${env.BUILD_URL}console
+        • Workspace: ${env.BUILD_URL}ws/
+
+        📅 Build exécuté le ${new Date()}
+        🏗️ Jenkins: ${env.JENKINS_URL}
         """
 
         mail(to: recipients, subject: subject, body: body, mimeType: 'text/plain')
-        echo "📧 Notification envoyée"
+        echo "📧 Notification envoyée à: ${recipients}"
 
     } catch (Exception e) {
         echo "❌ Erreur notification: ${e.getMessage()}"
@@ -788,10 +1222,15 @@ def sendEnhancedNotification(recipients) {
 
 def runMavenSecurityAudit() {
     try {
-        echo "🔍 Audit Maven..."
+        echo "🔍 Audit Maven des dépendances..."
         timeout(time: 3, unit: 'MINUTES') {
-            sh "mvn versions:display-dependency-updates -B -q"
+            sh """
+                mvn versions:display-dependency-updates \
+                    -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
+                    -B -q
+            """
         }
+        echo "✅ Audit Maven terminé"
     } catch (Exception e) {
         echo "⚠️ Audit Maven: ${e.getMessage()}"
     }
@@ -824,7 +1263,10 @@ def checkQualityGate(config) {
                     error "Quality Gate échoué sur master"
                 } else {
                     currentBuild.result = 'UNSTABLE'
+                    echo "⚠️ Quality Gate échoué sur ${env.BRANCH_NAME}"
                 }
+            } else {
+                echo "✅ Quality Gate réussi"
             }
         }
     } catch (Exception e) {
@@ -835,46 +1277,33 @@ def checkQualityGate(config) {
 
 def cleanupDockerImages(config) {
     try {
+        echo "🧹 Nettoyage Docker..."
         sh """
-            docker system prune -f || true
+            # Arrêt des conteneurs
             docker-compose down --remove-orphans || true
+
+            # Nettoyage des images non utilisées (garde les récentes)
+            docker image prune -f --filter "until=24h" || true
+
+            # Nettoyage des conteneurs arrêtés
+            docker container prune -f || true
+
+            # Nettoyage des volumes non utilisés
+            docker volume prune -f || true
+
+            # Nettoyage des réseaux non utilisés
+            docker network prune -f || true
         """
+        echo "✅ Nettoyage Docker terminé"
     } catch (Exception e) {
-        echo "⚠️ Cleanup: ${e.getMessage()}"
+        echo "⚠️ Erreur nettoyage Docker: ${e.getMessage()}"
     }
 }
 
-def createEnvFile() {
-    echo "📝 Création du fichier .env..."
+// =============================================================================
+// FONCTIONS UTILITAIRES POUR LA CONFIGURATION
+// =============================================================================
 
-    sh """
-        cat > .env << 'EOF'
-# Configuration environnement TourGuide
-BUILD_DATE=\$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-VCS_REF=${env.BRANCH_NAME}
-BUILD_NUMBER=${env.BUILD_NUMBER}
-
-# Configuration Application
-SPRING_ACTIVE_PROFILES=prod
-JAVA_OPTS=-Xmx512m -Xms256m -XX:+UseContainerSupport
-SERVER_PORT=8080
-
-# Port dynamique
-HTTP_PORT=${env.HTTP_PORT}
-
-# Configuration réseau
-NETWORK_NAME=tourguide-network
-
-# Configuration logging
-LOG_LEVEL=INFO
-LOG_PATH=/opt/app/logs
-EOF
-    """
-
-    echo "✅ Fichier .env créé avec les variables d'environnement"
-}
-
-// Fonctions utilitaires pour la configuration
 String getEnvName(String branchName, Map environments) {
     def branch = branchName?.toLowerCase()
     return environments[branch] ?: environments.default

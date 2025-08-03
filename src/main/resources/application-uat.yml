@@ -1,5 +1,5 @@
 server:
-  port: 8080  # Port interne du conteneur
+  port: ${SERVER_PORT:8091}
 
 logging:
   level:
@@ -11,6 +11,8 @@ logging:
     root: INFO
 
 management:
+  server:
+    port: ${SERVER_PORT:8091}
   endpoints:
     web:
       exposure:
