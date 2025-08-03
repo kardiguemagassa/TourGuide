@@ -19,7 +19,7 @@ def config = [
         qualityGate: 2,
         deployment: 5,
         sonarAnalysis: 10,
-        owaspCheck: 15  // Augmenté pour OWASP
+        owaspCheck: 25  // Augmenté pour OWASP
     ],
     ports: [
         master: '8092',
@@ -33,9 +33,9 @@ def config = [
     ],
     owasp: [
         enabled: true,
-        preferOfflineMode: false,  // Changé pour permettre le téléchargement
-        maxRetries: 2,
-        cvssThreshold: 7.0  // Seuil plus bas pour détecter plus de vulnérabilités
+        preferOfflineMode: false,  // Changé pour utiliser l'API NVD
+        maxRetries: 3,
+        cvssThreshold: 7.0
     ]
 ]
 
@@ -43,7 +43,7 @@ pipeline {
     agent any
 
     options {
-        timeout(time: 60, unit: 'MINUTES')  // Augmenté pour OWASP
+        timeout(time: 45, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '10'))
         skipDefaultCheckout(true)
         timestamps()
@@ -124,30 +124,16 @@ pipeline {
         stage('Build & Test') {
             steps {
                 script {
-                    echo "🏗️ Build et tests Maven avec couverture..."
-
-                    // Build principal avec tests et couverture
+                    echo "🏗️ Build et tests Maven..."
                     sh """
-                        mvn clean compile test \
-                            -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
+                        mvn clean verify \
+                            org.jacoco:jacoco-maven-plugin:prepare-agent \
+                            org.jacoco:jacoco-maven-plugin:report \
                             -DskipTests=false \
                             -Dmaven.test.failure.ignore=false \
-                            -B -U
-                    """
-
-                    // Génération du rapport JaCoCo
-                    sh """
-                        mvn jacoco:report \
-                            -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
-                            -B -q
-                    """
-
-                    // Package final
-                    sh """
-                        mvn package \
-                            -DskipTests=true \
-                            -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
-                            -B -q
+                            -Djacoco.destFile=target/jacoco.exec \
+                            -Djacoco.dataFile=target/jacoco.exec \
+                            -B -U -q
                     """
                 }
             }
@@ -195,7 +181,7 @@ pipeline {
             }
         }
 
-        stage('Security Analysis') {
+        stage('Security & Dependency Check') {
             parallel {
                 stage('OWASP Dependency Check') {
                     when {
@@ -206,13 +192,13 @@ pipeline {
                     }
                     steps {
                         script {
-                            runOwaspDependencyCheck(config)
+                            runOwaspDependencyCheckWithNVD(config)
                         }
                     }
                     post {
                         always {
                             script {
-                                publishOwaspReports()
+                                archiveOwaspReports()
                             }
                         }
                     }
@@ -291,18 +277,10 @@ pipeline {
         always {
             script {
                 try {
-                    // Archive des JAR
                     archiveArtifacts artifacts: 'target/*.jar', fingerprint: true, allowEmptyArchive: true
-
-                    // Publication des rapports finaux
-                    publishFinalReports()
-
-                    // Nettoyage Docker
                     if (env.DOCKER_AVAILABLE == "true") {
                         cleanupDockerImages(config)
                     }
-
-                    // Notification
                     sendEnhancedNotification(config.emailRecipients)
                 } catch (Exception e) {
                     echo "Erreur dans post always: ${e.getMessage()}"
@@ -315,170 +293,280 @@ pipeline {
 }
 
 // =============================================================================
-// FONCTION COVERAGE REPORT CORRIGÉE - 3 RAPPORTS DISTINCTS
+// FONCTION DE PUBLICATION CORRIGÉE (INSPIRÉE DE LA BRANCHE FEATURE)
 // =============================================================================
 
 def publishTestAndCoverageResults() {
-    echo "📊 Publication des rapports de tests et couverture de code..."
+    echo "📊 Publication des résultats de tests et couverture..."
 
-    // 1. Publication des résultats de tests JUnit
-    try {
-        if (fileExists('target/surefire-reports/TEST-*.xml')) {
-            junit testResults: 'target/surefire-reports/TEST-*.xml', allowEmptyResults: true
-            echo "✅ Rapports de tests JUnit publiés"
-        } else {
-            echo "⚠️ Aucun rapport de test JUnit trouvé"
-        }
-    } catch (Exception e) {
-        echo "⚠️ Erreur publication tests JUnit: ${e.getMessage()}"
+    // Publication des résultats de tests JUnit
+    if (fileExists('target/surefire-reports/TEST-*.xml')) {
+        junit 'target/surefire-reports/TEST-*.xml'
+        echo "✅ Résultats de tests JUnit publiés"
+    } else {
+        echo "⚠️ Aucun rapport de test trouvé"
     }
 
-    // 2. Publication du rapport JaCoCo HTML
-    try {
-        if (fileExists('target/site/jacoco/index.html')) {
-            publishHTML([
-                allowMissing: false,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: 'target/site/jacoco',
-                reportFiles: 'index.html',
-                reportName: 'JaCoCo Coverage Report',
-                reportTitles: ''
+    // Publication du rapport de couverture JaCoCo HTML
+    if (fileExists('target/site/jacoco/index.html')) {
+        publishHTML([
+            allowMissing: false,
+            alwaysLinkToLastBuild: true,
+            keepAll: true,
+            reportDir: 'target/site/jacoco',
+            reportFiles: 'index.html',
+            reportName: 'JaCoCo Coverage Report'
+        ])
+        echo "✅ Rapport de couverture HTML publié"
+    } else {
+        echo "⚠️ Rapport de couverture HTML non trouvé"
+    }
+
+    // Publication des métriques JaCoCo dans Jenkins
+    if (fileExists('target/site/jacoco/jacoco.xml')) {
+        try {
+            step([
+                $class: 'JacocoPublisher',
+                execPattern: '**/target/jacoco.exec',
+                classPattern: '**/target/classes',
+                sourcePattern: '**/src/main/java',
+                exclusionPattern: '**/test/**',
+                changeBuildStatus: false,
+                minimumInstructionCoverage: '0',
+                minimumBranchCoverage: '0',
+                minimumComplexityCoverage: '0',
+                minimumLineCoverage: '0',
+                minimumMethodCoverage: '0',
+                minimumClassCoverage: '0'
             ])
-            echo "✅ Rapport JaCoCo HTML publié"
-        } else {
-            echo "⚠️ Rapport JaCoCo HTML non trouvé"
+            echo "✅ Métriques JaCoCo publiées dans Jenkins"
+        } catch (Exception e) {
+            echo "⚠️ Impossible de publier les métriques JaCoCo: ${e.getMessage()}"
         }
-    } catch (Exception e) {
-        echo "⚠️ Erreur publication JaCoCo HTML: ${e.getMessage()}"
+    } else {
+        echo "⚠️ Fichier jacoco.xml non trouvé"
     }
 
-    // 3. Publication du Coverage Report séparé (DISTINCT du JaCoCo)
-    try {
-        if (fileExists('target/site/jacoco/jacoco.xml')) {
-            // Publication HTML alternative pour Coverage Report
-            publishHTML([
-                allowMissing: false,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: 'target/site/jacoco',
-                reportFiles: 'index.html',
-                reportName: 'Coverage Report',
-                reportTitles: ''
-            ])
-
-            // Archive du XML
-            archiveArtifacts artifacts: 'target/site/jacoco/jacoco.xml', allowEmptyArchive: true
-            echo "✅ Coverage Report publié"
-        } else {
-            echo "⚠️ Fichier jacoco.xml non trouvé"
-        }
-    } catch (Exception e) {
-        echo "⚠️ Erreur publication Coverage Report: ${e.getMessage()}"
+    // Archivage des artefacts de couverture
+    if (fileExists('target/site/jacoco/')) {
+        archiveArtifacts artifacts: 'target/site/jacoco/**', allowEmptyArchive: true
+        echo "✅ Artefacts de couverture archivés"
     }
-
-    // 4. Debug des fichiers générés
-    sh """
-        echo "🔍 ANALYSE DES RAPPORTS GÉNÉRÉS:"
-        echo "=================================="
-
-        echo "📁 Contenu de target/:"
-        ls -la target/ 2>/dev/null || echo "Répertoire target/ non trouvé"
-
-        echo "📁 Contenu de target/site/:"
-        ls -la target/site/ 2>/dev/null || echo "Répertoire target/site/ non trouvé"
-
-        echo "📁 Contenu de target/site/jacoco/:"
-        ls -la target/site/jacoco/ 2>/dev/null || echo "Répertoire target/site/jacoco/ non trouvé"
-
-        echo "📁 Contenu de target/surefire-reports/:"
-        ls -la target/surefire-reports/ 2>/dev/null || echo "Répertoire target/surefire-reports/ non trouvé"
-
-        echo "🔍 Recherche de tous les fichiers jacoco:"
-        find target/ -name "*jacoco*" -type f 2>/dev/null || echo "Aucun fichier jacoco trouvé"
-
-        echo "🔍 Recherche de tous les fichiers de rapport:"
-        find target/ -name "*.html" -o -name "*.xml" -o -name "*.json" 2>/dev/null || echo "Aucun fichier de rapport trouvé"
-    """
 }
 
 // =============================================================================
-// FONCTION OWASP DEPENDENCY CHECK CORRIGÉE
+// FONCTION OWASP AVEC NVD API KEY (COMME DANS LA BRANCHE FEATURE)
 // =============================================================================
 
-def runOwaspDependencyCheck(config) {
+def runOwaspDependencyCheckWithNVD(config) {
     try {
-        echo "🛡️ OWASP Dependency Check - Analyse de sécurité des dépendances"
+        echo "🛡️ OWASP Dependency Check avec NVD API Key..."
 
-        // Préparation des répertoires
-        sh """
-            rm -rf ${WORKSPACE}/owasp-data ${WORKSPACE}/target/dependency-check-* || true
-            mkdir -p ${WORKSPACE}/owasp-data
-            mkdir -p ${WORKSPACE}/target
-        """
+        withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
+            echo "✅ Clé NVD API configurée"
 
-        timeout(time: config.timeouts.owaspCheck, unit: 'MINUTES') {
-            echo "📥 Démarrage du scan OWASP (peut prendre du temps au premier lancement)..."
+            sh "rm -rf ${WORKSPACE}/owasp-data || true"
+            sh "mkdir -p ${WORKSPACE}/owasp-data"
 
-            def owaspCommand = """
-                mvn org.owasp:dependency-check-maven:check \
-                    -DdataDirectory=${WORKSPACE}/owasp-data \
-                    -DautoUpdate=true \
-                    -DfailBuildOnCVSS=${config.owasp.cvssThreshold} \
-                    -DsuppressFailureOnError=true \
-                    -DfailOnError=false \
-                    -Dformat=HTML,XML,JSON \
-                    -DprettyPrint=true \
-                    -DskipSystemScope=true \
-                    -DskipTestScope=false \
-                    -DskipProvidedScope=false \
-                    -DskipRuntimeScope=false \
-                    -DretireJsAnalyzerEnabled=false \
-                    -DnodeAnalyzerEnabled=false \
-                    -DossindexAnalyzerEnabled=false \
-                    -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
-                    -B
-            """
+            timeout(time: config.timeouts.owaspCheck, unit: 'MINUTES') {
+                def exitCode = sh(script: """
+                    mvn org.owasp:dependency-check-maven:check \
+                        -DnvdApiKey=\${NVD_API_KEY} \
+                        -DdataDirectory=${WORKSPACE}/owasp-data \
+                        -DautoUpdate=true \
+                        -DcveValidForHours=24 \
+                        -DfailBuildOnCVSS=${config.owasp.cvssThreshold} \
+                        -DsuppressFailureOnError=false \
+                        -DfailOnError=false \
+                        -Dformat=ALL \
+                        -DprettyPrint=true \
+                        -DretireJsAnalyzerEnabled=false \
+                        -DnodeAnalyzerEnabled=false \
+                        -DossindexAnalyzerEnabled=false \
+                        -DnvdDatafeedEnabled=true \
+                        -DnvdMaxRetryCount=${config.owasp.maxRetries} \
+                        -DnvdDelay=2000 \
+                        -DskipSystemScope=true \
+                        -B -q
+                """, returnStatus: true)
 
-            def exitCode = sh(script: owaspCommand, returnStatus: true)
-
-            echo "📋 Code de sortie OWASP: ${exitCode}"
-            handleOwaspResult(exitCode)
+                handleOwaspResult(exitCode)
+            }
         }
 
     } catch (Exception e) {
         echo "🚨 Erreur OWASP Dependency Check: ${e.getMessage()}"
+        createOwaspErrorReport(e)
 
-        // Création d'un rapport d'erreur
-        createOwaspErrorReport(e.getMessage())
+        if (e.getMessage().contains("timeout")) {
+            currentBuild.result = 'UNSTABLE'
+        } else if (e.getMessage().contains("403") || e.getMessage().contains("API")) {
+            echo "⚠️ Problème avec l'API NVD - Vérifiez la clé API"
+            currentBuild.result = 'UNSTABLE'
+        } else {
+            currentBuild.result = 'UNSTABLE'
+        }
 
-        currentBuild.result = 'UNSTABLE'
         echo "⏭️ Pipeline continue malgré l'erreur OWASP"
     }
+}
 
-    // Vérification des fichiers générés
+def createOwaspErrorReport(Exception e) {
     sh """
-        echo "🔍 VÉRIFICATION DES RAPPORTS OWASP:"
-        echo "===================================="
-
-        echo "📁 Contenu de target/ après OWASP:"
-        ls -la target/ || echo "Répertoire target non trouvé"
-
-        echo "🔍 Recherche des rapports dependency-check:"
-        find . -name "*dependency-check*" -type f || echo "Aucun rapport OWASP trouvé"
-
-        echo "📊 Taille des fichiers trouvés:"
-        find . -name "*dependency-check*" -type f -exec ls -lh {} \\; || echo "Aucun fichier à afficher"
+        mkdir -p target
+        cat > target/dependency-check-report.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OWASP Dependency Check - Erreur</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .error { color: #d32f2f; background: #ffebee; padding: 20px; border-radius: 4px; }
+        .timestamp { color: #666; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <h1>🛡️ OWASP Dependency Check - TourGuide</h1>
+    <div class="error">
+        <h2>⚠️ Scan de sécurité indisponible</h2>
+        <p><strong>Erreur:</strong> ${e.getMessage()}</p>
+        <p><strong>Build:</strong> #${env.BUILD_NUMBER}</p>
+        <p><strong>Branche:</strong> ${env.BRANCH_NAME}</p>
+        <div class="timestamp">Timestamp: ${new Date()}</div>
+    </div>
+    <h3>Actions recommandées:</h3>
+    <ul>
+        <li>Vérifier la clé API NVD dans Jenkins Credentials</li>
+        <li>Vérifier la connectivité réseau vers api.nvd.nist.gov</li>
+        <li>Contrôler les permissions du répertoire</li>
+        <li>Examiner les logs Maven détaillés</li>
+    </ul>
+</body>
+</html>
+EOF
     """
+}
+
+def archiveOwaspReports() {
+    echo "📋 Archivage des rapports OWASP..."
+
+    def reportFiles = [
+        'dependency-check-report.html',
+        'dependency-check-report.xml',
+        'dependency-check-report.json',
+        'dependency-check-report.csv'
+    ]
+
+    def reportsFound = false
+    reportFiles.each { report ->
+        if (fileExists("target/${report}")) {
+            archiveArtifacts artifacts: "target/${report}", allowEmptyArchive: true
+            echo "✅ Rapport ${report} archivé"
+            reportsFound = true
+        }
+    }
+
+    // Publication du rapport HTML principal
+    if (fileExists('target/dependency-check-report.html')) {
+        publishHTML([
+            allowMissing: false,
+            alwaysLinkToLastBuild: true,
+            keepAll: true,
+            reportDir: 'target',
+            reportFiles: 'dependency-check-report.html',
+            reportName: 'OWASP Security Report'
+        ])
+        echo "✅ Rapport OWASP HTML publié"
+    } else {
+        echo "⚠️ Aucun rapport OWASP HTML trouvé"
+    }
+
+    if (!reportsFound) {
+        echo "⚠️ Aucun rapport OWASP généré"
+    }
+}
+
+// =============================================================================
+// FONCTIONS CONSERVÉES ET ADAPTÉES
+// =============================================================================
+
+def checkDockerAvailability() {
+    try {
+        echo "🐳 Vérification de Docker..."
+
+        def dockerPaths = [
+            '/usr/bin/docker',
+            '/usr/local/bin/docker',
+            '/opt/homebrew/bin/docker',
+            'docker'
+        ]
+
+        def dockerFound = false
+        def dockerPath = ""
+
+        for (path in dockerPaths) {
+            try {
+                def result = sh(script: "command -v ${path} 2>/dev/null || echo 'not-found'", returnStdout: true).trim()
+                if (result != 'not-found' && result != '') {
+                    dockerFound = true
+                    dockerPath = result
+                    echo "✅ Docker trouvé à: ${dockerPath}"
+                    break
+                }
+            } catch (Exception e) {
+                // Continuer la recherche
+            }
+        }
+
+        if (!dockerFound) {
+            echo "❌ Docker non trouvé dans les emplacements standards"
+            return "false"
+        }
+
+        if (dockerFound) {
+            try {
+                sh "${dockerPath} --version"
+                def daemonCheck = sh(script: "${dockerPath} info >/dev/null 2>&1", returnStatus: true)
+
+                if (daemonCheck == 0) {
+                    echo "✅ Docker daemon actif"
+
+                    try {
+                        def composeCheck = sh(script: "docker-compose --version || docker compose --version", returnStatus: true)
+                        if (composeCheck == 0) {
+                            echo "✅ Docker Compose disponible"
+                            return "true"
+                        } else {
+                            echo "⚠️ Docker Compose non disponible"
+                            return "false"
+                        }
+                    } catch (Exception e) {
+                        echo "⚠️ Erreur vérification Docker Compose: ${e.getMessage()}"
+                        return "false"
+                    }
+                } else {
+                    echo "❌ Docker daemon non actif"
+                    return "false"
+                }
+            } catch (Exception e) {
+                echo "❌ Erreur vérification Docker: ${e.getMessage()}"
+                return "false"
+            }
+        }
+
+    } catch (Exception e) {
+        echo "❌ Erreur vérification Docker: ${e.getMessage()}"
+        return "false"
+    }
 }
 
 def handleOwaspResult(exitCode) {
     switch(exitCode) {
         case 0:
-            echo "✅ OWASP: Scan terminé avec succès, aucune vulnérabilité critique"
+            echo "✅ OWASP: Aucune vulnérabilité critique détectée"
             break
         case 1:
-            echo "⚠️ OWASP: Vulnérabilités détectées mais sous le seuil critique"
+            echo "⚠️ OWASP: Vulnérabilités détectées mais sous le seuil configuré"
             currentBuild.result = 'UNSTABLE'
             break
         default:
@@ -488,247 +576,10 @@ def handleOwaspResult(exitCode) {
     }
 }
 
-def createOwaspErrorReport(errorMessage) {
-    sh """
-        cat > target/dependency-check-report.html << 'EOF'
-<!DOCTYPE html>
-<html>
-<head>
-    <title>OWASP Dependency Check - Rapport d'Erreur</title>
-    <meta charset="UTF-8">
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
-            margin: 0; padding: 20px; background: #f8f9fa;
-        }
-        .container {
-            max-width: 1000px; margin: 0 auto; background: white;
-            border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        .header {
-            background: #dc3545; color: white; padding: 20px;
-            border-radius: 8px 8px 0 0;
-        }
-        .content { padding: 30px; }
-        .error-box {
-            background: #f8d7da; border: 1px solid #f5c6cb;
-            color: #721c24; padding: 15px; border-radius: 5px; margin: 20px 0;
-        }
-        .info-box {
-            background: #d1ecf1; border: 1px solid #bee5eb;
-            color: #0c5460; padding: 15px; border-radius: 5px; margin: 20px 0;
-        }
-        .timestamp { color: #6c757d; font-size: 0.9em; margin-top: 20px; }
-        .build-info {
-            background: #e9ecef; padding: 15px; border-radius: 5px;
-            font-family: monospace; margin: 20px 0;
-        }
-        h1 { margin: 0; font-size: 24px; }
-        h2 { color: #495057; border-bottom: 2px solid #dee2e6; padding-bottom: 10px; }
-        ul { padding-left: 20px; }
-        li { margin: 8px 0; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🛡️ OWASP Dependency Check</h1>
-            <p>Rapport d'analyse de sécurité des dépendances</p>
-        </div>
-
-        <div class="content">
-            <div class="error-box">
-                <h2>⚠️ Scan de sécurité indisponible</h2>
-                <p><strong>Erreur:</strong> ${errorMessage}</p>
-            </div>
-
-            <div class="build-info">
-                <strong>Informations du build:</strong><br>
-                • Build: #${env.BUILD_NUMBER}<br>
-                • Branche: ${env.BRANCH_NAME}<br>
-                • Workspace: ${WORKSPACE}<br>
-                • Date: ${new Date()}
-            </div>
-
-            <div class="info-box">
-                <h2>Actions recommandées</h2>
-                <ul>
-                    <li>Vérifier la connectivité Internet pour le téléchargement de la base CVE</li>
-                    <li>Contrôler les permissions du répertoire de travail Jenkins</li>
-                    <li>Examiner les logs Maven détaillés dans la console</li>
-                    <li>Vérifier la configuration du plugin OWASP dans le pom.xml</li>
-                    <li>S'assurer que toutes les dépendances Maven sont correctement résolues</li>
-                    <li>Vérifier l'espace disque disponible (la base CVE fait plusieurs GB)</li>
-                </ul>
-            </div>
-
-            <h2>Configuration utilisée</h2>
-            <div class="build-info">
-• Répertoire de données: ${WORKSPACE}/owasp-data<br>
-• Seuil CVSS: ${config.owasp.cvssThreshold}<br>
-• Timeout: ${config.timeouts.owaspCheck} minutes<br>
-• Auto-update: activé<br>
-• Formats: HTML, XML, JSON
-            </div>
-
-            <div class="timestamp">
-                <em>Rapport généré automatiquement le ${new Date()}</em>
-            </div>
-        </div>
-    </div>
-</body>
-</html>
-EOF
-    """
-}
-
-// =============================================================================
-// FONCTION PUBLICATION RAPPORTS OWASP (CORRIGÉE)
-// =============================================================================
-
-def publishOwaspReports() {
-    echo "📋 Publication des rapports OWASP Dependency Check..."
-
-    def reportFiles = [
-        'dependency-check-report.html',
-        'dependency-check-report.xml',
-        'dependency-check-report.json'
-    ]
-
-    def foundReports = []
-
-    // Archive des fichiers de rapport
-    reportFiles.each { report ->
-        if (fileExists("target/${report}")) {
-            try {
-                archiveArtifacts artifacts: "target/${report}", allowEmptyArchive: true
-                foundReports.add(report)
-                echo "✅ Fichier archivé: ${report}"
-            } catch (Exception e) {
-                echo "⚠️ Erreur archivage ${report}: ${e.getMessage()}"
-            }
-        } else {
-            echo "⚠️ Fichier non trouvé: target/${report}"
-        }
-    }
-
-    // Publication du rapport HTML OWASP (NOM EXACT COMME DANS FEATURE_CI)
-    try {
-        if (fileExists('target/dependency-check-report.html')) {
-            publishHTML([
-                allowMissing: false,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: 'target',
-                reportFiles: 'dependency-check-report.html',
-                reportName: 'OWASP Dependency Check Report',
-                reportTitles: ''
-            ])
-            echo "✅ Rapport OWASP HTML publié"
-        } else {
-            echo "⚠️ Rapport OWASP HTML non trouvé pour publication"
-        }
-    } catch (Exception e) {
-        echo "⚠️ Erreur publication rapport OWASP HTML: ${e.getMessage()}"
-    }
-
-    if (foundReports.isEmpty()) {
-        echo "⚠️ Aucun rapport OWASP trouvé"
-    } else {
-        echo "✅ Rapports OWASP publiés: ${foundReports.join(', ')}"
-    }
-}
-
-// =============================================================================
-// FONCTION PUBLICATION FINALE DE TOUS LES RAPPORTS (COMME FEATURE_CI)
-// =============================================================================
-
-def publishFinalReports() {
-    echo "📊 Publication finale de tous les rapports..."
-
-    // Publication du Coverage Report dédié (GARANTIT QUE LE 3ème RAPPORT APPARAÎT)
-    try {
-        if (fileExists('target/site/jacoco/index.html')) {
-            publishHTML([
-                allowMissing: false,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: 'target/site/jacoco',
-                reportFiles: 'index.html',
-                reportName: 'Coverage Report',
-                reportTitles: 'Code Coverage Analysis'
-            ])
-            echo "✅ Coverage Report final publié"
-        }
-    } catch (Exception e) {
-        echo "⚠️ Erreur publication Coverage Report final: ${e.getMessage()}"
-    }
-
-    // Résumé des rapports disponibles
-    echo """
-    📊 RÉSUMÉ DES RAPPORTS DISPONIBLES:
-    ===================================
-    • JaCoCo Coverage Report: Couverture de code détaillée
-    • Coverage Report: Analyse de couverture
-    • OWASP Dependency Check Report: Analyse de sécurité
-    • Build Artifacts: JAR et autres artefacts
-    """
-}
-
-// =============================================================================
-// AUTRES FONCTIONS (inchangées de la version feature_ci)
-// =============================================================================
-
-def checkDockerAvailability() {
-    try {
-        echo "🐳 Vérification de Docker..."
-        def dockerCheck = sh(script: "docker --version && docker info >/dev/null 2>&1", returnStatus: true)
-        if (dockerCheck == 0) {
-            def composeCheck = sh(script: "docker-compose --version || docker compose --version", returnStatus: true)
-            return composeCheck == 0 ? "true" : "false"
-        }
-        return "false"
-    } catch (Exception e) {
-        echo "❌ Docker non disponible: ${e.getMessage()}"
-        return "false"
-    }
-}
-
-def validateEnvironment() {
-    echo "🔍 Validation de l'environnement..."
-    sh """
-        echo "Java Version:" && java -version
-        echo "Maven Version:" && mvn -version
-        echo "Espace disque:" && df -h . | tail -1
-    """
-}
-
-def validateDockerPrerequisites() {
-    if (env.DOCKER_AVAILABLE != "true") {
-        error "🐳 Docker non disponible"
-    }
-
-    def requiredFiles = ['Dockerfile', 'docker-compose.yml']
-    requiredFiles.each { file ->
-        if (!fileExists(file)) {
-            error "📄 Fichier requis manquant: ${file}"
-        }
-    }
-
-    def jarFiles = findFiles(glob: 'target/*.jar').findAll {
-        it.name.endsWith('.jar') && !it.name.contains('sources') && !it.name.contains('javadoc')
-    }
-
-    if (jarFiles.length == 0) {
-        error "📦 Aucun JAR exécutable trouvé"
-    }
-
-    echo "📦 JAR trouvé: ${jarFiles[0].path}"
-}
-
 def buildDockerImage(config) {
     try {
         echo "🐳 Construction de l'image Docker..."
+
         def imageName = "${config.containerName}:${env.CONTAINER_TAG}"
 
         sh """
@@ -750,9 +601,60 @@ def buildDockerImage(config) {
     }
 }
 
+def validateEnvironment() {
+    echo "🔍 Validation de l'environnement..."
+
+    sh """
+        java -version
+        echo "JAVA_HOME: \$JAVA_HOME"
+    """
+
+    sh """
+        mvn -version
+    """
+
+    sh """
+        df -h . | tail -1 | awk '{print "💾 Espace disque: " \$4 " disponible (" \$5 " utilisé)"}'
+    """
+
+    def criticalFiles = ['pom.xml', 'src/main/java']
+    criticalFiles.each { file ->
+        if (!fileExists(file)) {
+            error "❌ Fichier/dossier critique manquant: ${file}"
+        }
+    }
+}
+
+def validateDockerPrerequisites() {
+    if (env.DOCKER_AVAILABLE != "true") {
+        error "🐳 Docker non disponible"
+    }
+
+    def requiredFiles = ['Dockerfile']
+    requiredFiles.each { file ->
+        if (!fileExists(file)) {
+            error "📄 Fichier requis manquant: ${file}"
+        }
+    }
+
+    def jarFiles = findFiles(glob: 'target/*.jar').findAll {
+        it.name.endsWith('.jar') && !it.name.contains('sources') && !it.name.contains('javadoc')
+    }
+
+    if (jarFiles.length == 0) {
+        error "📦 Aucun JAR exécutable trouvé"
+    }
+
+    echo "📦 JAR trouvé: ${jarFiles[0].path}"
+}
+
 def deployWithDockerCompose(config) {
     try {
         echo "🐳 Déploiement avec Docker Compose..."
+
+        if (!fileExists('docker-compose.yml')) {
+            error "❌ Fichier docker-compose.yml introuvable"
+        }
 
         createEnvFile()
 
@@ -772,6 +674,7 @@ def deployWithDockerCompose(config) {
         echo "✅ Application déployée avec Docker Compose"
         sleep(10)
         sh "docker-compose ps"
+        sh "docker-compose logs --tail 20 ${config.serviceName} || true"
 
     } catch (Exception e) {
         sh "docker-compose logs ${config.serviceName} --tail 50 || true"
@@ -825,6 +728,75 @@ def performHealthCheck(config) {
     }
 }
 
+def displayBuildInfo(config) {
+    echo """
+    ================================================================================
+                            🚀 CONFIGURATION BUILD TOURGUIDE
+    ================================================================================
+     Build #: ${env.BUILD_NUMBER}
+     Branch: ${env.BRANCH_NAME}
+     Java: 17
+     Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Disponible" : "⚠️ Indisponible"}
+     Port: ${env.HTTP_PORT}
+     Tag: ${env.CONTAINER_TAG}
+     Service: ${config.serviceName}
+     OWASP: Avec NVD API Key
+     Coverage: JaCoCo Plugin Jenkins natif
+    ================================================================================
+    """
+}
+
+def sendEnhancedNotification(recipients) {
+    try {
+        def status = currentBuild.currentResult ?: 'SUCCESS'
+        def statusIcon = ['SUCCESS': '✅', 'FAILURE': '❌', 'UNSTABLE': '⚠️', 'ABORTED': '🛑'][status] ?: '❓'
+
+        def subject = "[Jenkins] TourGuide - Build #${env.BUILD_NUMBER} - ${status}"
+
+        def deploymentInfo = ""
+        if (env.DOCKER_AVAILABLE == "true" && (status == 'SUCCESS' || status == 'UNSTABLE')) {
+            deploymentInfo = """
+        🚀 Application: http://localhost:${env.HTTP_PORT}
+        🐳 Container: tourguide-app
+        📊 Coverage: ${env.BUILD_URL}jacoco/
+        🛡️ OWASP: ${env.BUILD_URL}OWASP_20Security_20Report/
+        """
+        }
+
+        def body = """
+        ${statusIcon} Build ${status}
+
+        📋 Détails:
+        • Build: #${env.BUILD_NUMBER}
+        • Branche: ${env.BRANCH_NAME}
+        • Java: 17
+        • Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅" : "❌"}
+        • OWASP: Avec NVD API
+
+        ${deploymentInfo}
+
+        🔗 Console: ${env.BUILD_URL}console
+        """
+
+        mail(to: recipients, subject: subject, body: body, mimeType: 'text/plain')
+        echo "📧 Notification envoyée"
+
+    } catch (Exception e) {
+        echo "❌ Erreur notification: ${e.getMessage()}"
+    }
+}
+
+def runMavenSecurityAudit() {
+    try {
+        echo "🔍 Audit Maven..."
+        timeout(time: 3, unit: 'MINUTES') {
+            sh "mvn versions:display-dependency-updates -B -q"
+        }
+    } catch (Exception e) {
+        echo "⚠️ Audit Maven: ${e.getMessage()}"
+    }
+}
+
 def performSonarAnalysis(config) {
     echo "📊 Analyse SonarQube..."
     withSonarQubeEnv('SonarQube') {
@@ -834,9 +806,9 @@ def performSonarAnalysis(config) {
                     -Dsonar.projectKey=${env.SONAR_PROJECT_KEY} \
                     -Dsonar.host.url=\$SONAR_HOST_URL \
                     -Dsonar.token=\${SONAR_TOKEN} \
+                    -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
                     -Dsonar.java.source=17 \
                     -Dsonar.java.target=17 \
-                    -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
                     -B -q
             """
         }
@@ -852,10 +824,7 @@ def checkQualityGate(config) {
                     error "Quality Gate échoué sur master"
                 } else {
                     currentBuild.result = 'UNSTABLE'
-                    echo "⚠️ Quality Gate échoué sur ${env.BRANCH_NAME}"
                 }
-            } else {
-                echo "✅ Quality Gate réussi"
             }
         }
     } catch (Exception e) {
@@ -864,51 +833,33 @@ def checkQualityGate(config) {
     }
 }
 
-def runMavenSecurityAudit() {
-    try {
-        echo "🔍 Audit Maven des dépendances..."
-        timeout(time: 3, unit: 'MINUTES') {
-            sh """
-                mvn versions:display-dependency-updates \
-                    -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
-                    -B -q
-            """
-        }
-        echo "✅ Audit Maven terminé"
-    } catch (Exception e) {
-        echo "⚠️ Audit Maven: ${e.getMessage()}"
-    }
-}
-
 def cleanupDockerImages(config) {
     try {
-        echo "🧹 Nettoyage Docker..."
         sh """
             docker system prune -f || true
             docker-compose down --remove-orphans || true
         """
-        echo "✅ Nettoyage Docker terminé"
     } catch (Exception e) {
-        echo "⚠️ Erreur nettoyage Docker: ${e.getMessage()}"
+        echo "⚠️ Cleanup: ${e.getMessage()}"
     }
 }
 
 def createEnvFile() {
-    echo "📝 Création du fichier .env pour Docker Compose..."
+    echo "📝 Création du fichier .env..."
 
     sh """
         cat > .env << 'EOF'
-# Configuration environnement TourGuide - Build #${env.BUILD_NUMBER}
+# Configuration environnement TourGuide
 BUILD_DATE=\$(date -u +'%Y-%m-%dT%H:%M:%SZ')
 VCS_REF=${env.BRANCH_NAME}
 BUILD_NUMBER=${env.BUILD_NUMBER}
 
 # Configuration Application
 SPRING_ACTIVE_PROFILES=prod
-JAVA_OPTS=-Xmx512m -Xms256m -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0
+JAVA_OPTS=-Xmx512m -Xms256m -XX:+UseContainerSupport
 SERVER_PORT=8080
 
-# Port externe dynamique selon l'environnement
+# Port dynamique
 HTTP_PORT=${env.HTTP_PORT}
 
 # Configuration réseau
@@ -917,130 +868,13 @@ NETWORK_NAME=tourguide-network
 # Configuration logging
 LOG_LEVEL=INFO
 LOG_PATH=/opt/app/logs
-
-# Configuration Actuator
-MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=health,info,metrics
-MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS=always
-
-# Informations de l'application
-APP_NAME=TourGuide
-APP_VERSION=0.0.1-SNAPSHOT
-APP_ENVIRONMENT=${env.ENV_NAME}
 EOF
     """
 
-    echo "✅ Fichier .env créé avec la configuration pour l'environnement ${env.ENV_NAME}"
+    echo "✅ Fichier .env créé avec les variables d'environnement"
 }
 
-def displayBuildInfo(config) {
-    echo """
-    ================================================================================
-                            🚀 CONFIGURATION BUILD TOURGUIDE
-    ================================================================================
-     Build #: ${env.BUILD_NUMBER}
-     Branche: ${env.BRANCH_NAME}
-     Environnement: ${env.ENV_NAME}
-     Port HTTP: ${env.HTTP_PORT}
-     Tag Docker: ${env.CONTAINER_TAG}
-     Service: ${config.serviceName}
-
-     🔧 Configuration:
-     • Java: JDK 17
-     • Maven: M3
-     • Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Disponible" : "⚠️ Indisponible"}
-     • SonarQube: ${config.sonar.communityEdition ? "Community Edition" : "Enterprise"}
-
-     📊 Rapports activés:
-     • Coverage Report: ✅ JaCoCo (3 rapports distincts)
-     • Security Report: ✅ OWASP Dependency Check
-     • Quality Gate: ✅ SonarQube
-
-     ⏱️ Timeouts:
-     • OWASP Check: ${config.timeouts.owaspCheck} min
-     • Quality Gate: ${config.timeouts.qualityGate} min
-     • Deployment: ${config.timeouts.deployment} min
-    ================================================================================
-    """
-}
-
-def sendEnhancedNotification(recipients) {
-    try {
-        def status = currentBuild.currentResult ?: 'SUCCESS'
-        def statusIcon = [
-            'SUCCESS': '✅',
-            'FAILURE': '❌',
-            'UNSTABLE': '⚠️',
-            'ABORTED': '🛑'
-        ][status] ?: '❓'
-
-        def subject = "[Jenkins] TourGuide - Build #${env.BUILD_NUMBER} - ${status} (${env.BRANCH_NAME})"
-
-        def deploymentInfo = ""
-        if (env.DOCKER_AVAILABLE == "true" && (status == 'SUCCESS' || status == 'UNSTABLE')) {
-            deploymentInfo = """
-
-        🚀 DÉPLOIEMENT:
-        • Application: http://localhost:${env.HTTP_PORT}
-        • Container: tourguide-app-${env.BRANCH_NAME}-${env.BUILD_NUMBER}
-        • Environnement: ${env.ENV_NAME}
-        • Health Check: http://localhost:${env.HTTP_PORT}/actuator/health
-        """
-        }
-
-        def reportsInfo = """
-
-        📊 RAPPORTS DISPONIBLES:
-        • Coverage Report: ${env.BUILD_URL}Coverage_20Report/
-        • JaCoCo Coverage: ${env.BUILD_URL}JaCoCo_20Coverage_20Report/
-        • OWASP Security: ${env.BUILD_URL}OWASP_20Dependency_20Check_20Report/
-        • Console Logs: ${env.BUILD_URL}console
-        """
-
-        def body = """
-        ${statusIcon} BUILD ${status} - TourGuide
-
-        📋 DÉTAILS DU BUILD:
-        • Numéro: #${env.BUILD_NUMBER}
-        • Branche: ${env.BRANCH_NAME}
-        • Environnement: ${env.ENV_NAME}
-        • Tag Docker: ${env.CONTAINER_TAG}
-        • Durée: ${currentBuild.durationString ?: 'N/A'}
-
-        🔧 CONFIGURATION:
-        • Java: JDK 17
-        • Maven: M3
-        • Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Disponible" : "❌ Indisponible"}
-        • Port: ${env.HTTP_PORT}
-        ${deploymentInfo}
-        ${reportsInfo}
-
-        💡 ACTIONS DISPONIBLES:
-        • Redéployer: Relancer le pipeline
-        • Logs: Consulter la console Jenkins
-        • Rapports: Voir les liens ci-dessus
-
-        📅 Build exécuté le ${new Date()}
-        🏗️ Jenkins: ${env.JENKINS_URL}
-        """
-
-        mail(
-            to: recipients,
-            subject: subject,
-            body: body,
-            mimeType: 'text/plain',
-            charset: 'UTF-8'
-        )
-        echo "📧 Notification envoyée à: ${recipients}"
-
-    } catch (Exception e) {
-        echo "❌ Erreur lors de l'envoi de notification: ${e.getMessage()}"
-    }
-}
-
-// =============================================================================
-// FONCTIONS UTILITAIRES POUR LA CONFIGURATION
-// =============================================================================
-
+// Fonctions utilitaires pour la configuration
 String getEnvName(String branchName, Map environments) {
     def branch = branchName?.toLowerCase()
     return environments[branch] ?: environments.default
