@@ -587,7 +587,7 @@ EOF
 
     echo "✅ Fichier .env créé avec la configuration pour l'environnement ${env.ENV_NAME}"
 
-    # Affichage pour debug
+    // Affichage pour debug
     sh """
         echo "📋 Contenu du fichier .env créé:"
         echo "================================"
