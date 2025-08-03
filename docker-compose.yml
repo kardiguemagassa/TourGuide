@@ -1,36 +1,35 @@
 services:
   tourguide:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        BUILD_DATE: ${BUILD_DATE:-2025-07-31T11:00:00Z}
-        VCS_REF: ${VCS_REF:-unknown}
-        BUILD_NUMBER: ${BUILD_NUMBER:-dev}
+    # CORRECTION 1: Utiliser l'image construite au lieu de build
+    image: tourguide-app:${CONTAINER_TAG:-latest}
     container_name: tourguide-app-${BRANCH_NAME:-local}-${BUILD_NUMBER:-dev}
     ports:
-      # CORRECTION: Mapper vers le port correct selon l'environnement
-      - "${HTTP_PORT:-8090}:${INTERNAL_PORT:-8080}"
+      # CORRECTION 2: Utiliser SERVER_PORT (défini dans .env) au lieu d'INTERNAL_PORT
+      - "${HTTP_PORT:-8091}:${SERVER_PORT:-8091}"
     environment:
       - JAVA_OPTS=${JAVA_OPTS:-"-Xmx512m -Xms256m -XX:+UseContainerSupport"}
-      # CORRECTION: Utiliser le port dynamique selon l'environnement
-      - SERVER_PORT=${INTERNAL_PORT:-8080}
-      - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE:-prod}
+      # CORRECTION 3: Utiliser SERVER_PORT cohérent
+      - SERVER_PORT=${SERVER_PORT:-8091}
+      # CORRECTION 4: Utiliser ENV_NAME au lieu de SPRING_PROFILES_ACTIVE hardcodé
+      - SPRING_PROFILES_ACTIVE=${ENV_NAME:-uat}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      # AJOUT: Variables d'environnement supplémentaires
-      - MANAGEMENT_SERVER_PORT=${INTERNAL_PORT:-8080}
+      # CORRECTION 5: Management sur le même port
+      - MANAGEMENT_SERVER_PORT=${SERVER_PORT:-8091}
       - BRANCH_NAME=${BRANCH_NAME:-develop}
       - BUILD_NUMBER=${BUILD_NUMBER:-dev}
+      # AJOUT: Variables supplémentaires pour l'application
+      - APP_NAME=${APP_NAME:-TourGuide}
+      - APP_VERSION=${APP_VERSION:-0.0.1-SNAPSHOT}
+      - APP_ENVIRONMENT=${ENV_NAME:-uat}
     networks:
       - tourguide-network
     restart: unless-stopped
     volumes:
-      # AJOUT: Volume pour les logs
       - app-logs:/opt/app/logs
       - /tmp:/tmp
     healthcheck:
-      # CORRECTION: Utiliser le port dynamique pour le health check
-      test: ["CMD", "curl", "-f", "http://localhost:${INTERNAL_PORT:-8080}/actuator/health"]
+      # CORRECTION 6: Utiliser SERVER_PORT au lieu d'INTERNAL_PORT
+      test: ["CMD", "curl", "-f", "http://localhost:${SERVER_PORT:-8091}/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 5

@@ -15,39 +15,50 @@ ARG BUILD_NUMBER
 LABEL org.opencontainers.image.created=${BUILD_DATE}
 LABEL org.opencontainers.image.revision=${VCS_REF}
 LABEL org.opencontainers.image.version=${BUILD_NUMBER}
+LABEL org.opencontainers.image.source="https://github.com/kardiguemagassa/TourGuide"
+LABEL org.opencontainers.image.title="TourGuide Application"
 
-# Installation des outils nécessaires
-RUN apk --no-cache add curl bash
+# AMÉLIORATION 1: Installation optimisée avec nettoyage
+RUN apk --no-cache add curl bash \
+    && rm -rf /var/cache/apk/*
 
 # Création d'un utilisateur non-root pour la sécurité
 RUN addgroup -g 1000 -S spring && \
     adduser -u 1000 -S spring -G spring
 
-# Variables d'environnement par défaut
+# AMÉLIORATION 2: Variables d'environnement plus flexibles
 ENV JAVA_OPTS="-Xmx512m -Xms256m -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0"
 ENV SERVER_PORT=8080
 ENV SPRING_PROFILES_ACTIVE=prod
+ENV TZ=Europe/Paris
+ENV LANG=en_US.UTF-8
 
 # Répertoire de travail et logs
 WORKDIR /opt/app
-RUN mkdir -p /opt/app/logs && chown -R spring:spring /opt/app
 
-# Copie des fichiers avec les bonnes permissions
-COPY --chown=spring:spring ${JAR_FILE} tourguide-0.0.1-SNAPSHOT.jar
-COPY --chown=spring:spring entrypoint.sh entrypoint.sh
+# AMÉLIORATION 3: Créer structure de répertoires complète
+RUN mkdir -p /opt/app/logs /opt/app/config /opt/app/data && \
+    chown -R spring:spring /opt/app
 
-# Permissions d'exécution
-RUN chmod +x entrypoint.sh
+# AMÉLIORATION 4: Copie du JAR avec nom générique
+COPY --chown=spring:spring ${JAR_FILE} app.jar
+
+# AMÉLIORATION 5: Vérifier si entrypoint.sh existe avant de le copier
+COPY --chown=spring:spring entrypoint.sh* ./
+RUN if [ -f entrypoint.sh ]; then chmod +x entrypoint.sh; fi
 
 # Basculer vers l'utilisateur non-root
 USER spring:spring
 
-# Health check intégré - CORRECTION: Port dynamique
+# AMÉLIORATION 6: Health check plus robuste
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:${SERVER_PORT}/actuator/health || exit 1
+    CMD curl -f http://localhost:${SERVER_PORT}/actuator/health || \
+        curl -f http://localhost:8080/actuator/health || \
+        curl -f http://localhost:8091/actuator/health || \
+        curl -f http://localhost:8092/actuator/health || exit 1
 
-# CORRECTION: Exposer plusieurs ports possibles
+# Exposer plusieurs ports possibles
 EXPOSE 8080 8091 8092
 
-# Point d'entrée
-ENTRYPOINT ["./entrypoint.sh"]
+# AMÉLIORATION 7: Point d'entrée avec fallback
+ENTRYPOINT ["sh", "-c", "if [ -f entrypoint.sh ]; then ./entrypoint.sh; else java $JAVA_OPTS -jar app.jar; fi"]
