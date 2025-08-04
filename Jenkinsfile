@@ -312,121 +312,183 @@ pipeline {
 def publishTestAndCoverageResults() {
     echo "📊 Publication des résultats de tests et couverture..."
 
-    // DIAGNOSTIC PRÉALABLE
+    // Diagnostic complet des fichiers
     sh '''
-        echo "🔍 Diagnostic des fichiers de tests:"
-        if [ -d "target/surefire-reports" ]; then
-            echo "✅ Répertoire surefire-reports trouvé"
-            ls -la target/surefire-reports/
-            echo "Nombre de fichiers TEST-*.xml: $(ls target/surefire-reports/TEST-*.xml 2>/dev/null | wc -l)"
-        else
-            echo "❌ Répertoire surefire-reports non trouvé"
-        fi
+        echo "🔍 DIAGNOSTIC COMPLET DES FICHIERS DE TESTS"
+        echo "=========================================="
+
+        echo "Recherche exhaustive de fichiers XML de tests:"
+        find . -name "*.xml" -path "*/surefire*" -o -name "TEST-*.xml" 2>/dev/null | while read file; do
+            echo "Trouvé: $file"
+            ls -la "$file"
+        done
+
+        echo "Recherche dans des emplacements alternatifs:"
+        for dir in "target/surefire-reports" "build/test-results" "build/reports" "target/test-results"; do
+            if [ -d "$dir" ]; then
+                echo "Répertoire $dir existe:"
+                ls -la "$dir"/ 2>/dev/null || echo "Impossible de lire $dir"
+            else
+                echo "Répertoire $dir n'existe pas"
+            fi
+        done
     '''
 
-    // Publication des résultats de tests JUnit avec paramètres complets
-    if (fileExists('target/surefire-reports/TEST-*.xml')) {
+    // Recherche intelligente des fichiers de tests
+    def testReportPaths = [
+        'target/surefire-reports/TEST-*.xml',
+        'target/surefire-reports/*.xml',
+        'build/test-results/test/TEST-*.xml',
+        'build/test-results/**/*.xml',
+        'target/test-results/test/TEST-*.xml'
+    ]
+
+    def testFilesFound = false
+    def workingPattern = null
+
+    // Tester chaque pattern
+    testReportPaths.each { pattern ->
+        if (!testFilesFound) {
+            def fileCount = sh(
+                script: "ls ${pattern} 2>/dev/null | wc -l || echo 0",
+                returnStdout: true
+            ).trim().toInteger()
+
+            echo "🔍 Pattern '${pattern}': ${fileCount} fichiers trouvés"
+
+            if (fileCount > 0) {
+                testFilesFound = true
+                workingPattern = pattern
+                echo "✅ Pattern de travail trouvé: ${pattern}"
+            }
+        }
+    }
+
+    // Publication des tests si des fichiers sont trouvés
+    if (testFilesFound && workingPattern) {
+        echo "📤 Tentative de publication avec le pattern: ${workingPattern}"
+
         try {
-            // CORRECTION: Utiliser junit avec paramètres complets
+            // Méthode 1: junit() avec le pattern qui fonctionne
             junit(
-                testResults: 'target/surefire-reports/TEST-*.xml',
+                testResults: workingPattern,
                 allowEmptyResults: false,
                 keepLongStdio: true,
                 skipPublishingChecks: false
             )
-            echo "✅ Résultats de tests JUnit publiés"
-        } catch (Exception e) {
-            echo "❌ Erreur publication JUnit: ${e.getMessage()}"
+            echo "✅ Tests publiés avec junit()"
+        } catch (Exception e1) {
+            echo "⚠️ junit() échoué: ${e1.getMessage()}"
 
-            // FALLBACK: Essayer avec la syntaxe alternative
             try {
-                step([
-                    $class: 'JUnitResultArchiver',
-                    testResults: 'target/surefire-reports/TEST-*.xml',
-                    allowEmptyResults: false
+                // Méthode 2: publishTestResults
+                publishTestResults([
+                    testResultsPattern: workingPattern,
+                    mergeResults: true,
+                    failIfNoResults: false
                 ])
-                echo "✅ Tests publiés avec JUnitResultArchiver"
+                echo "✅ Tests publiés avec publishTestResults()"
             } catch (Exception e2) {
-                echo "❌ Erreur JUnitResultArchiver: ${e2.getMessage()}"
+                echo "⚠️ publishTestResults() échoué: ${e2.getMessage()}"
+
+                try {
+                    // Méthode 3: step() - la plus compatible
+                    step([
+                        $class: 'JUnitResultArchiver',
+                        testResults: workingPattern,
+                        allowEmptyResults: false
+                    ])
+                    echo "✅ Tests publiés avec step(JUnitResultArchiver)"
+                } catch (Exception e3) {
+                    echo "❌ Toutes les méthodes ont échoué:"
+                    echo "  junit(): ${e1.getMessage()}"
+                    echo "  publishTestResults(): ${e2.getMessage()}"
+                    echo "  step(): ${e3.getMessage()}"
+                }
             }
         }
     } else {
-        echo "⚠️ Aucun rapport de test trouvé"
+        echo "❌ Aucun fichier de test trouvé avec les patterns testés"
 
-        // Debug supplémentaire
+        // Diagnostic d'urgence
         sh '''
-            echo "Debug supplémentaire:"
-            find target -name "*.xml" -type f 2>/dev/null | head -10 || echo "Aucun XML trouvé"
-            ls -la target/ 2>/dev/null || echo "target/ non accessible"
+            echo "=== DIAGNOSTIC D'URGENCE ==="
+            echo "Répertoire de travail: $(pwd)"
+            echo "Contenu complet de target/:"
+            find target -type f 2>/dev/null | head -20 || echo "target/ inaccessible"
+
+            echo "Tous les fichiers .xml dans le projet:"
+            find . -name "*.xml" -type f 2>/dev/null | grep -v ".git" | head -20
+
+            echo "Historique des commandes Maven:"
+            cat .maven.log 2>/dev/null | tail -20 || echo "Pas de log Maven trouvé"
         '''
     }
 
-    // Publication du rapport de couverture JaCoCo HTML
-    if (fileExists('target/site/jacoco/index.html')) {
-        try {
+    // Publication JaCoCo (simplifié mais robuste)
+    publishJacocoReports()
+}
+
+def publishJacocoReports() {
+    echo "📊 Publication des rapports JaCoCo..."
+
+    // Rapport HTML
+    try {
+        if (fileExists('target/site/jacoco/index.html')) {
             publishHTML([
                 allowMissing: false,
                 alwaysLinkToLastBuild: true,
                 keepAll: true,
                 reportDir: 'target/site/jacoco',
                 reportFiles: 'index.html',
-                reportName: 'JaCoCo Coverage Report'
+                reportName: 'JaCoCo Coverage Report',
+                reportTitles: ''
             ])
-            echo "✅ Rapport de couverture HTML publié"
-        } catch (Exception e) {
-            echo "⚠️ Erreur publication HTML: ${e.getMessage()}"
+            echo "✅ Rapport JaCoCo HTML publié"
+        } else {
+            echo "⚠️ Pas de rapport HTML JaCoCo trouvé"
         }
-    } else {
-        echo "⚠️ Rapport de couverture HTML non trouvé"
+    } catch (Exception e) {
+        echo "⚠️ Erreur publication HTML JaCoCo: ${e.getMessage()}"
     }
 
-    // Publication des métriques JaCoCo dans Jenkins
-    if (fileExists('target/site/jacoco/jacoco.xml')) {
-        try {
-            // CORRECTION: Utiliser jacoco() au lieu de step avec JacocoPublisher
+    // Métriques JaCoCo
+    try {
+        if (fileExists('target/jacoco.exec')) {
             jacoco(
                 execPattern: '**/target/jacoco.exec',
                 classPattern: '**/target/classes',
                 sourcePattern: '**/src/main/java',
-                exclusionPattern: '**/test/**',
-                changeBuildStatus: false,
-                minimumInstructionCoverage: '0',
-                minimumBranchCoverage: '0',
-                minimumComplexityCoverage: '0',
-                minimumLineCoverage: '0',
-                minimumMethodCoverage: '0',
-                minimumClassCoverage: '0'
+                exclusionPattern: '**/test/**'
             )
-            echo "✅ Métriques JaCoCo publiées dans Jenkins"
-        } catch (Exception e) {
-            echo "⚠️ Impossible de publier les métriques JaCoCo: ${e.getMessage()}"
-
-            // FALLBACK: Essayer avec step()
-            try {
-                step([
-                    $class: 'JacocoPublisher',
-                    execPattern: '**/target/jacoco.exec',
-                    classPattern: '**/target/classes',
-                    sourcePattern: '**/src/main/java',
-                    exclusionPattern: '**/test/**'
-                ])
-                echo "✅ Métriques JaCoCo publiées avec step()"
-            } catch (Exception e2) {
-                echo "⚠️ Erreur step JacocoPublisher: ${e2.getMessage()}"
-            }
+            echo "✅ Métriques JaCoCo publiées"
+        } else {
+            echo "⚠️ Pas de fichier jacoco.exec trouvé"
         }
-    } else {
-        echo "⚠️ Fichier jacoco.xml non trouvé"
+    } catch (Exception e) {
+        echo "⚠️ Erreur métriques JaCoCo: ${e.getMessage()}"
     }
 
-    // Archivage des artefacts de couverture
-    if (fileExists('target/site/jacoco/')) {
-        try {
-            archiveArtifacts artifacts: 'target/site/jacoco/**', allowEmptyArchive: true
-            echo "✅ Artefacts de couverture archivés"
-        } catch (Exception e) {
-            echo "⚠️ Erreur archivage: ${e.getMessage()}"
+    // Archivage
+    try {
+        def artifactsToArchive = []
+        if (fileExists('target/jacoco.exec')) {
+            artifactsToArchive.add('target/jacoco.exec')
         }
+        if (fileExists('target/site/jacoco/')) {
+            artifactsToArchive.add('target/site/jacoco/**/*')
+        }
+
+        if (artifactsToArchive.size() > 0) {
+            archiveArtifacts(
+                artifacts: artifactsToArchive.join(','),
+                allowEmptyArchive: true,
+                fingerprint: true
+            )
+            echo "✅ Artefacts JaCoCo archivés: ${artifactsToArchive.join(', ')}"
+        }
+    } catch (Exception e) {
+        echo "⚠️ Erreur archivage JaCoCo: ${e.getMessage()}"
     }
 }
 
