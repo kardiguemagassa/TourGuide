@@ -1279,7 +1279,7 @@ def sendEnhancedNotification(recipients) {
         • Branche: ${env.BRANCH_NAME}
         • Environnement: ${env.ENV_NAME}
         • Port: ${env.HTTP_PORT}
-        • Java: 21                    // ← CORRECTION: était "17"
+        • Java: 21
         • Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅" : "❌"}
         • OWASP: Avec fallback automatique
         • Durée: ${currentBuild.durationString ?: 'N/A'}

@@ -133,42 +133,19 @@
 			</plugin>
 
 			<!-- Surefire Plugin (exécute les tests) -->
+			<!-- CONFIGURATION COMPLÈTE SUREFIRE + JACOCO -->
+
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
-				<version>${surefire.version}</version>
+				<version>3.2.5</version>
 				<configuration>
-					<!-- Configuration pour générer les rapports XML -->
-					<useSystemClassLoader>false</useSystemClassLoader>
-					<forkCount>1</forkCount>
-					<reuseForks>true</reuseForks>
-
-					<!-- Patterns de tests -->
-					<includes>
-						<include>**/*Test.java</include>
-						<include>**/*Tests.java</include>
-						<include>**/*TestCase.java</include>
-						<include>**/Test*.java</include>
-					</includes>
-
-					<!-- Exclusions si nécessaire -->
-					<excludes>
-						<exclude>**/TestPerformance.java</exclude> <!-- Exclure les tests de perf pour build rapide -->
-					</excludes>
-
-					<!-- Configuration JaCoCo -->
 					<argLine>
-						-javaagent:${settings.localRepository}/org/jacoco/org.jacoco.agent/${jacoco.version}/org.jacoco.agent-${jacoco.version}-runtime.jar=destfile=${project.build.directory}/jacoco.exec
-						-Xmx1024m
-						-XX:+UseG1GC
+						-javaagent:"${settings.localRepository}/net/bytebuddy/byte-buddy-agent/1.14.5/byte-buddy-agent-1.14.5.jar"
+						-javaagent:"${settings.localRepository}/org/jacoco/org.jacoco.agent/0.8.10/org.jacoco.agent-0.8.10-runtime.jar"=destfile=${project.build.directory}/jacoco.exec
 					</argLine>
-
-					<!-- Génération des rapports -->
-					<reportFormat>xml</reportFormat>
-					<trimStackTrace>false</trimStackTrace>
 				</configuration>
 			</plugin>
-
 
 			<!-- JaCoCo Plugin (génère les rapports de couverture) -->
 			<plugin>
@@ -181,35 +158,24 @@
 						<goals>
 							<goal>prepare-agent</goal>
 						</goals>
+						<configuration>
+							<!-- JaCoCo configure automatiquement l'argLine -->
+							<propertyName>surefireArgLine</propertyName>
+						</configuration>
 					</execution>
 					<execution>
 						<id>report</id>
-						<phase>verify</phase>
+						<phase>test</phase>
 						<goals>
 							<goal>report</goal>
 						</goals>
 					</execution>
-					<!-- Vérification du seuil de couverture -->
 					<execution>
-						<id>jacoco-check</id>
+						<id>post-integration-test</id>
+						<phase>post-integration-test</phase>
 						<goals>
-							<goal>check</goal>
+							<goal>report</goal>
 						</goals>
-						<configuration>
-							<rules>
-								<rule>
-									<element>PACKAGE</element>
-									<limits>
-										<limit>
-											<counter>LINE</counter>
-											<value>COVEREDRATIO</value>
-											<minimum>0.60</minimum> <!-- 60% minimum -->
-										</limit>
-									</limits>
-								</rule>
-							</rules>
-							<haltOnFailure>false</haltOnFailure> <!-- Ne bloque pas le build -->
-						</configuration>
 					</execution>
 				</executions>
 			</plugin>
