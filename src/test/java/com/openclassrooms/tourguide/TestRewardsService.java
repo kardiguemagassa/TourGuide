@@ -1,8 +1,5 @@
 package com.openclassrooms.tourguide;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import java.util.Date;
 import java.util.List;
 import java.util.UUID;
@@ -19,13 +16,15 @@ import com.openclassrooms.tourguide.user.User;
 import com.openclassrooms.tourguide.user.UserReward;
 import org.junit.jupiter.api.AfterEach;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 public class TestRewardsService {
 
 	private final static org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(TestRewardsService.class);
 	private TourGuideService tourGuideService;
 
 	@AfterEach
-	public void tearDown() {
+	void tearDown() {
 		if (tourGuideService != null) {
 			tourGuideService.shutdown();
 		}
@@ -59,7 +58,7 @@ public class TestRewardsService {
 
 	// DÉCOMMENTEZ ET CORRIGEZ ce test
 	@Test
-	public void nearAllAttractions() {
+	void nearAllAttractions() {
 		GpsUtil gpsUtil = new GpsUtil();
 		RewardsService rewardsService = new RewardsService(gpsUtil, new RewardCentral());
 		rewardsService.setProximityBuffer(Integer.MAX_VALUE);
@@ -71,10 +70,20 @@ public class TestRewardsService {
 		rewardsService.calculateRewards(user);
 
 		// Attendre que les récompenses soient calculées
-		try {
-			Thread.sleep(2000);
-		} catch (InterruptedException e) {
-			Thread.currentThread().interrupt();
+		long timeout = 2000; // 2 secondes max
+		long pollInterval = 50; // vérifier toutes les 50ms
+		long start = System.currentTimeMillis();
+
+		while (user.getUserRewards().isEmpty()) {
+			if (System.currentTimeMillis() - start > timeout) {
+				fail("Timeout après " + timeout + "ms : aucune récompense calculée");
+			}
+			try {
+				Thread.sleep(pollInterval);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				fail("Test interrompu");
+			}
 		}
 
 		List<UserReward> userRewards = user.getUserRewards();
