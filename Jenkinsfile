@@ -312,25 +312,70 @@ pipeline {
 def publishTestAndCoverageResults() {
     echo "📊 Publication des résultats de tests et couverture..."
 
-    // Publication des résultats de tests JUnit
+    // DIAGNOSTIC PRÉALABLE
+    sh '''
+        echo "🔍 Diagnostic des fichiers de tests:"
+        if [ -d "target/surefire-reports" ]; then
+            echo "✅ Répertoire surefire-reports trouvé"
+            ls -la target/surefire-reports/
+            echo "Nombre de fichiers TEST-*.xml: $(ls target/surefire-reports/TEST-*.xml 2>/dev/null | wc -l)"
+        else
+            echo "❌ Répertoire surefire-reports non trouvé"
+        fi
+    '''
+
+    // Publication des résultats de tests JUnit avec paramètres complets
     if (fileExists('target/surefire-reports/TEST-*.xml')) {
-        junit 'target/surefire-reports/TEST-*.xml'
-        echo "✅ Résultats de tests JUnit publiés"
+        try {
+            // CORRECTION: Utiliser junit avec paramètres complets
+            junit(
+                testResults: 'target/surefire-reports/TEST-*.xml',
+                allowEmptyResults: false,
+                keepLongStdio: true,
+                skipPublishingChecks: false
+            )
+            echo "✅ Résultats de tests JUnit publiés"
+        } catch (Exception e) {
+            echo "❌ Erreur publication JUnit: ${e.getMessage()}"
+
+            // FALLBACK: Essayer avec la syntaxe alternative
+            try {
+                step([
+                    $class: 'JUnitResultArchiver',
+                    testResults: 'target/surefire-reports/TEST-*.xml',
+                    allowEmptyResults: false
+                ])
+                echo "✅ Tests publiés avec JUnitResultArchiver"
+            } catch (Exception e2) {
+                echo "❌ Erreur JUnitResultArchiver: ${e2.getMessage()}"
+            }
+        }
     } else {
         echo "⚠️ Aucun rapport de test trouvé"
+
+        // Debug supplémentaire
+        sh '''
+            echo "Debug supplémentaire:"
+            find target -name "*.xml" -type f 2>/dev/null | head -10 || echo "Aucun XML trouvé"
+            ls -la target/ 2>/dev/null || echo "target/ non accessible"
+        '''
     }
 
     // Publication du rapport de couverture JaCoCo HTML
     if (fileExists('target/site/jacoco/index.html')) {
-        publishHTML([
-            allowMissing: false,
-            alwaysLinkToLastBuild: true,
-            keepAll: true,
-            reportDir: 'target/site/jacoco',
-            reportFiles: 'index.html',
-            reportName: 'JaCoCo Coverage Report'
-        ])
-        echo "✅ Rapport de couverture HTML publié"
+        try {
+            publishHTML([
+                allowMissing: false,
+                alwaysLinkToLastBuild: true,
+                keepAll: true,
+                reportDir: 'target/site/jacoco',
+                reportFiles: 'index.html',
+                reportName: 'JaCoCo Coverage Report'
+            ])
+            echo "✅ Rapport de couverture HTML publié"
+        } catch (Exception e) {
+            echo "⚠️ Erreur publication HTML: ${e.getMessage()}"
+        }
     } else {
         echo "⚠️ Rapport de couverture HTML non trouvé"
     }
@@ -338,8 +383,8 @@ def publishTestAndCoverageResults() {
     // Publication des métriques JaCoCo dans Jenkins
     if (fileExists('target/site/jacoco/jacoco.xml')) {
         try {
-            step([
-                $class: 'JacocoPublisher',
+            // CORRECTION: Utiliser jacoco() au lieu de step avec JacocoPublisher
+            jacoco(
                 execPattern: '**/target/jacoco.exec',
                 classPattern: '**/target/classes',
                 sourcePattern: '**/src/main/java',
@@ -351,10 +396,24 @@ def publishTestAndCoverageResults() {
                 minimumLineCoverage: '0',
                 minimumMethodCoverage: '0',
                 minimumClassCoverage: '0'
-            ])
+            )
             echo "✅ Métriques JaCoCo publiées dans Jenkins"
         } catch (Exception e) {
             echo "⚠️ Impossible de publier les métriques JaCoCo: ${e.getMessage()}"
+
+            // FALLBACK: Essayer avec step()
+            try {
+                step([
+                    $class: 'JacocoPublisher',
+                    execPattern: '**/target/jacoco.exec',
+                    classPattern: '**/target/classes',
+                    sourcePattern: '**/src/main/java',
+                    exclusionPattern: '**/test/**'
+                ])
+                echo "✅ Métriques JaCoCo publiées avec step()"
+            } catch (Exception e2) {
+                echo "⚠️ Erreur step JacocoPublisher: ${e2.getMessage()}"
+            }
         }
     } else {
         echo "⚠️ Fichier jacoco.xml non trouvé"
@@ -362,8 +421,12 @@ def publishTestAndCoverageResults() {
 
     // Archivage des artefacts de couverture
     if (fileExists('target/site/jacoco/')) {
-        archiveArtifacts artifacts: 'target/site/jacoco/**', allowEmptyArchive: true
-        echo "✅ Artefacts de couverture archivés"
+        try {
+            archiveArtifacts artifacts: 'target/site/jacoco/**', allowEmptyArchive: true
+            echo "✅ Artefacts de couverture archivés"
+        } catch (Exception e) {
+            echo "⚠️ Erreur archivage: ${e.getMessage()}"
+        }
     }
 }
 
