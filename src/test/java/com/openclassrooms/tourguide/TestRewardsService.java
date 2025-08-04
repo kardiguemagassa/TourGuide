@@ -1,8 +1,15 @@
 package com.openclassrooms.tourguide;
 
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import gpsUtil.GpsUtil;
@@ -21,57 +28,61 @@ import static org.junit.jupiter.api.Assertions.*;
 public class TestRewardsService {
 
 	private final static org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(TestRewardsService.class);
+
+	private GpsUtil gpsUtil;
+	private RewardsService rewardsService;
 	private TourGuideService tourGuideService;
+
+	@BeforeEach
+	void setUp() {
+		gpsUtil = new GpsUtil();
+		rewardsService = new RewardsService(gpsUtil, new RewardCentral());
+		InternalTestHelper.setInternalUserNumber(0);
+		tourGuideService = new TourGuideService(gpsUtil, rewardsService);
+	}
 
 	@AfterEach
 	void tearDown() {
 		if (tourGuideService != null) {
 			tourGuideService.shutdown();
 		}
+		if (rewardsService != null) {
+			rewardsService.shutdown();
+		}
 	}
 
 	@Test
 	public void userGetRewards() throws InterruptedException {
-		GpsUtil gpsUtil = new GpsUtil();
-		RewardsService rewardsService = new RewardsService(gpsUtil, new RewardCentral());
-
-		InternalTestHelper.setInternalUserNumber(0);
-		tourGuideService = new TourGuideService(gpsUtil, rewardsService);
-
 		User user = new User(UUID.randomUUID(), "jon", "000", "jon@tourGuide.com");
-		Attraction attraction = gpsUtil.getAttractions().get(0);
+		Attraction attraction = gpsUtil.getAttractions().getFirst();
 		user.addToVisitedLocations(new VisitedLocation(user.getUserId(), attraction, new Date()));
+
 		tourGuideService.trackUserLocation(user);
 		Thread.sleep(1000); // Attendre le calcul asynchrone
-		List<UserReward> userRewards = user.getUserRewards();
 
+		List<UserReward> userRewards = user.getUserRewards();
 		assertEquals(1, userRewards.size());
 	}
 
 	@Test
 	public void isWithinAttractionProximity() {
-		GpsUtil gpsUtil = new GpsUtil();
-		RewardsService rewardsService = new RewardsService(gpsUtil, new RewardCentral());
-		Attraction attraction = gpsUtil.getAttractions().get(0);
+		Attraction attraction = gpsUtil.getAttractions().getFirst();
 		assertTrue(rewardsService.isWithinAttractionProximity(attraction, attraction));
 	}
 
-	// DÉCOMMENTEZ ET CORRIGEZ ce test
 	@Test
 	void nearAllAttractions() {
-		GpsUtil gpsUtil = new GpsUtil();
-		RewardsService rewardsService = new RewardsService(gpsUtil, new RewardCentral());
 		rewardsService.setProximityBuffer(Integer.MAX_VALUE);
 
 		InternalTestHelper.setInternalUserNumber(1);
-		tourGuideService = new TourGuideService(gpsUtil, rewardsService);
+		TourGuideService localTourGuideService = new TourGuideService(gpsUtil, rewardsService);
 
-		User user = tourGuideService.getAllUsers().get(0);
+		User user = localTourGuideService.getAllUsers().getFirst();
 		rewardsService.calculateRewards(user);
 
 		// Attendre que les récompenses soient calculées
-		long timeout = 2000; // 2 secondes max
-		long pollInterval = 50; // vérifier toutes les 50ms
+		long timeout = 2000;
+		long pollInterval = 50;
 		long start = System.currentTimeMillis();
 
 		while (user.getUserRewards().isEmpty()) {
@@ -87,43 +98,50 @@ public class TestRewardsService {
 		}
 
 		List<UserReward> userRewards = user.getUserRewards();
-
-		// Vérifier qu'il y a au moins quelques récompenses
-		assertTrue(userRewards.size() > 0, "L'utilisateur devrait avoir des récompenses");
+        assertFalse(userRewards.isEmpty(), "L'utilisateur devrait avoir des récompenses");
 		LOGGER.info("Nombre de récompenses trouvées: {}", userRewards.size());
-	}
 
-	/*@Test
-	public void nearAllAttractions() {
-		GpsUtil gpsUtil = new GpsUtil();
-		RewardsService rewardsService = new RewardsService(gpsUtil, new RewardCentral());
-		rewardsService.setProximityBuffer(Integer.MAX_VALUE);
-
-		InternalTestHelper.setInternalUserNumber(1);
-		TourGuideService tourGuideService = new TourGuideService(gpsUtil, rewardsService);
-
-		rewardsService.calculateRewards(tourGuideService.getAllUsers().get(0));
-		List<UserReward> userRewards = tourGuideService.getUserRewards(tourGuideService.getAllUsers().get(0));
-		tourGuideService.tracker.stopTracking();
-
-		assertEquals(gpsUtil.getAttractions().size(), userRewards.size());
+		localTourGuideService.shutdown();
 	}
 
 	@Test
-	public void nearAllAttractionss() {
-		GpsUtil gpsUtil = new GpsUtil();
-		RewardsService rewardsService = new RewardsService(gpsUtil, new RewardCentral());
-		rewardsService.setProximityBuffer(Integer.MAX_VALUE);
+	public void shutdownMultipleTimes() {
+		RewardsService testService = new RewardsService(gpsUtil, new RewardCentral());
 
-		InternalTestHelper.setInternalUserNumber(1);
-		TourGuideService tourGuideService = new TourGuideService(gpsUtil, rewardsService);
+		// Premier shutdown
+		assertDoesNotThrow(testService::shutdown);
 
-		rewardsService.calculateRewards(tourGuideService.getAllUsers().get(0));
-		List<UserReward> userRewards = tourGuideService.getUserRewards(tourGuideService.getAllUsers().get(0));
-		tourGuideService.tracker.stopTracking();
+		// Deuxième shutdown (doit être idempotent)
+		assertDoesNotThrow(testService::shutdown);
+	}
 
-		assertEquals(26, userRewards.size()); // Remplacez par le nombre réel d'attractions si différent
-	}*/
+	@Test
+	public void concurrentRewardCalculation() throws ExecutionException, InterruptedException, TimeoutException {
+		List<User> users = new ArrayList<>();
+		Attraction attraction = gpsUtil.getAttractions().get(0);
 
+		// Créer plusieurs utilisateurs avec des locations près de la même attraction
+		for (int i = 0; i < 5; i++) {
+			User user = new User(UUID.randomUUID(), "concurrentUser" + i, "000", "concurrent" + i + "@test.com");
+			user.addToVisitedLocations(new VisitedLocation(user.getUserId(), attraction, new Date()));
+			users.add(user);
+		}
+
+		// Calculer les récompenses en parallèle
+		List<CompletableFuture<Void>> futures = users.stream()
+				.map(rewardsService::calculateRewardsAsync)
+				.toList();
+
+		CompletableFuture<Void> allFutures = CompletableFuture.allOf(
+				futures.toArray(new CompletableFuture[0])
+		);
+
+		allFutures.get(10, TimeUnit.SECONDS);
+
+		// Vérifier que tous les utilisateurs ont des récompenses
+		for (User user : users) {
+            assertFalse(user.getUserRewards().isEmpty(), "L'utilisateur " + user.getUserName() + " devrait avoir des récompenses");
+		}
+	}
 
 }
