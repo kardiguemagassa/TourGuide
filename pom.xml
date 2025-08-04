@@ -225,7 +225,7 @@
 									<version>[3.6.3,)</version>
 								</requireMavenVersion>
 								<requireJavaVersion>
-									<version>[17,18)</version> <!-- Force Java 17 -->
+									<version>[21,22)</version> <!-- Force Java 21 -->
 								</requireJavaVersion>
 							</rules>
 						</configuration>
