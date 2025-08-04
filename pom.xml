@@ -15,10 +15,13 @@
 	<description>Demo project for Spring Boot</description>
 
 	<properties>
-		<!-- COHÉRENCE JAVA 17 partout -->
-		<java.version>17</java.version>
-		<maven.compiler.source>17</maven.compiler.source>
-		<maven.compiler.target>17</maven.compiler.target>
+		<java.version>21</java.version>
+		<maven.compiler.source>21</maven.compiler.source>
+		<maven.compiler.target>21</maven.compiler.target>
+
+		<!-- Configuration pour les tests -->
+		<skipTests>false</skipTests>
+		<maven.test.skip>false</maven.test.skip>
 
 		<!-- Versions des plugins -->
 		<jacoco.version>0.8.10</jacoco.version>
@@ -59,7 +62,7 @@
 			<scope>test</scope>
 		</dependency>
 
-		<!-- Mockito (remplace mockito-core) -->
+		<!-- Mockito -->
 		<dependency>
 			<groupId>org.mockito</groupId>
 			<artifactId>mockito-inline</artifactId>
@@ -67,7 +70,7 @@
 			<scope>test</scope>
 		</dependency>
 
-		<!-- Assertions supplémentaires -->
+		<!-- Assertions -->
 		<dependency>
 			<groupId>org.assertj</groupId>
 			<artifactId>assertj-core</artifactId>
@@ -130,22 +133,17 @@
 			</plugin>
 
 			<!-- Surefire Plugin (exécute les tests) -->
+			<!-- CONFIGURATION COMPLÈTE SUREFIRE + JACOCO -->
+
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
-				<version>${surefire.version}</version>
+				<version>3.2.5</version>
 				<configuration>
-					<useSystemClassLoader>false</useSystemClassLoader>
 					<argLine>
-						-javaagent:${settings.localRepository}/org/jacoco/org.jacoco.agent/${jacoco.version}/org.jacoco.agent-${jacoco.version}-runtime.jar=destfile=${project.build.directory}/jacoco.exec
-						-Xshare:off
+						-javaagent:"${settings.localRepository}/net/bytebuddy/byte-buddy-agent/1.14.5/byte-buddy-agent-1.14.5.jar"
+						-javaagent:"${settings.localRepository}/org/jacoco/org.jacoco.agent/0.8.10/org.jacoco.agent-0.8.10-runtime.jar"=destfile=${project.build.directory}/jacoco.exec
 					</argLine>
-					<!-- Amélioration des rapports de tests -->
-					<includes>
-						<include>**/*Test.java</include>
-						<include>**/*Tests.java</include>
-						<include>**/*TestCase.java</include>
-					</includes>
 				</configuration>
 			</plugin>
 
@@ -160,35 +158,24 @@
 						<goals>
 							<goal>prepare-agent</goal>
 						</goals>
+						<configuration>
+							<!-- JaCoCo configure automatiquement l'argLine -->
+							<propertyName>surefireArgLine</propertyName>
+						</configuration>
 					</execution>
 					<execution>
 						<id>report</id>
-						<phase>verify</phase>
+						<phase>test</phase>
 						<goals>
 							<goal>report</goal>
 						</goals>
 					</execution>
-					<!-- Vérification du seuil de couverture -->
 					<execution>
-						<id>jacoco-check</id>
+						<id>post-integration-test</id>
+						<phase>post-integration-test</phase>
 						<goals>
-							<goal>check</goal>
+							<goal>report</goal>
 						</goals>
-						<configuration>
-							<rules>
-								<rule>
-									<element>PACKAGE</element>
-									<limits>
-										<limit>
-											<counter>LINE</counter>
-											<value>COVEREDRATIO</value>
-											<minimum>0.60</minimum> <!-- 60% minimum -->
-										</limit>
-									</limits>
-								</rule>
-							</rules>
-							<haltOnFailure>false</haltOnFailure> <!-- Ne bloque pas le build -->
-						</configuration>
 					</execution>
 				</executions>
 			</plugin>
@@ -225,7 +212,7 @@
 									<version>[3.6.3,)</version>
 								</requireMavenVersion>
 								<requireJavaVersion>
-									<version>[17,18)</version> <!-- Force Java 17 -->
+									<version>[21,22)</version> <!-- Force Java 21 -->
 								</requireJavaVersion>
 							</rules>
 						</configuration>

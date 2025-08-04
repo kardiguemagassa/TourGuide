@@ -1,5 +1,5 @@
 server:
-  port: ${SERVER_PORT:8090}
+  port: ${SERVER_PORT:8092}  # Utiliser la variable d'environnement
 
 logging:
   level:
@@ -7,16 +7,16 @@ logging:
       openclassrooms:
         tourguide: DEBUG
     org:
-      springframework: DEBUG
+      springframework: INFO
     root: INFO
 
 management:
   server:
-    port: ${SERVER_PORT:8090}
+    port: ${SERVER_PORT:8092}  # Même port que l'application
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,env
+        include: health,info,metrics
   endpoint:
     health:
       show-details: always
