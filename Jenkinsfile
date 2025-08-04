@@ -1058,7 +1058,7 @@ def createDefaultDockerfile() {
     sh """
         cat > Dockerfile << 'EOF'
 # Dockerfile par défaut pour TourGuide
-FROM openjdk:17-jre-slim
+FROM openjdk:21-jre-slim        // ← CORRECTION: était "17"
 
 # Métadonnées
 LABEL maintainer="TourGuide Team"
@@ -1102,7 +1102,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \\
 ENTRYPOINT ["sh", "-c", "java \$JAVA_OPTS -jar app.jar"]
 EOF
     """
-    echo "✅ Dockerfile par défaut créé"
+    echo "✅ Dockerfile par défaut créé avec Java 21"
 }
 
 // =============================================================================
@@ -1232,7 +1232,7 @@ def displayBuildInfo(config) {
      Branch: ${env.BRANCH_NAME}
      Environment: ${env.ENV_NAME}
      Port externe: ${env.HTTP_PORT}
-     Java: 17
+     Java: 21
      Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Disponible" : "⚠️ Indisponible"}
      Tag: ${env.CONTAINER_TAG}
      Service: ${config.serviceName}
@@ -1279,7 +1279,7 @@ def sendEnhancedNotification(recipients) {
         • Branche: ${env.BRANCH_NAME}
         • Environnement: ${env.ENV_NAME}
         • Port: ${env.HTTP_PORT}
-        • Java: 17
+        • Java: 21                    // ← CORRECTION: était "17"
         • Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅" : "❌"}
         • OWASP: Avec fallback automatique
         • Durée: ${currentBuild.durationString ?: 'N/A'}
@@ -1328,8 +1328,8 @@ def performSonarAnalysis(config) {
                     -Dsonar.host.url=\$SONAR_HOST_URL \
                     -Dsonar.token=\${SONAR_TOKEN} \
                     -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
-                    -Dsonar.java.source=17 \
-                    -Dsonar.java.target=17 \
+                    -Dsonar.java.source=21 \
+                    -Dsonar.java.target=21 \
                     -B -q
             """
         }
