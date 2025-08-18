@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>3.1.1</version>
+		<version>3.3.4</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.openclassrooms</groupId>
@@ -28,6 +28,29 @@
 		<surefire.version>3.2.5</surefire.version>
 		<owasp.version>9.2.0</owasp.version>
 	</properties>
+
+	<!-- Configuration des repositories nexus -->
+	<repositories>
+		<repository>
+			<id>nexus-public</id>
+			<name>Nexus Public Repository</name>
+			<url>http://localhost:8081/repository/maven-public/</url>
+		</repository>
+	</repositories>
+
+	<!-- Configuration pour le déploiement nexus -->
+	<distributionManagement>
+		<repository>
+			<id>nexus-releases</id>
+			<name>Nexus Releases</name>
+			<url>http://localhost:8081/repository/maven-releases/</url>
+		</repository>
+		<snapshotRepository>
+			<id>nexus-snapshots</id>
+			<name>Nexus Snapshots</name>
+			<url>http://localhost:8081/repository/maven-snapshots/</url>
+		</snapshotRepository>
+	</distributionManagement>
 
 	<dependencies>
 		<dependency>
@@ -220,7 +243,7 @@
 				</executions>
 			</plugin>
 
-			<!-- OWASP Dependency Check - Configuration OPTIMISÉE -->
+			<!-- OWASP Dependency Check - Configuration -->
 			<plugin>
 				<groupId>org.owasp</groupId>
 				<artifactId>dependency-check-maven</artifactId>
