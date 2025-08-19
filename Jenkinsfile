@@ -1133,10 +1133,17 @@ def cleanupDockerImages(config) {
     try {
         echo "🧹 Nettoyage Docker..."
         sh """
+            # Arrêt des conteneurs TourGuide
+            docker ps -a --filter "name=tourguide" --format "{{.Names}}" | xargs docker rm -f 2>/dev/null || true
+
+            # Arrêt via docker-compose
             docker-compose down --remove-orphans || true
+
+            # Nettoyage standard
             docker image prune -f --filter "until=24h" || true
             docker container prune -f || true
             docker volume prune -f || true
+            docker network prune -f || true  # ← AJOUT UTILE de votre version
         """
         echo "✅ Nettoyage Docker terminé"
     } catch (Exception e) {
