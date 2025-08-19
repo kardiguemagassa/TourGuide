@@ -30,9 +30,21 @@
 	</properties>
 
 	<!--
-	NOTE: Repositories Nexus supprimés - configurés dans Jenkins via Config File Provider
-	Évite les conflits entre POM et configuration Jenkins
+	IMPORTANT: distributionManagement REQUIS pour déploiement Nexus
+	Même si configuré dans settings.xml, Maven a besoin de ces éléments dans le POM
 	-->
+	<distributionManagement>
+		<repository>
+			<id>nexus-releases</id>
+			<name>Nexus Releases Repository</name>
+			<url>http://localhost:8081/repository/maven-releases/</url>
+		</repository>
+		<snapshotRepository>
+			<id>nexus-snapshots</id>
+			<name>Nexus Snapshots Repository</name>
+			<url>http://localhost:8081/repository/maven-snapshots/</url>
+		</snapshotRepository>
+	</distributionManagement>
 
 	<dependencies>
 		<dependency>
@@ -148,8 +160,8 @@
 					<useSystemClassLoader>false</useSystemClassLoader>
 					<forkCount>1</forkCount>
 					<reuseForks>false</reuseForks>
-					<!-- SUPPRESSION de l'option UseContainerSupport pour Java 21 -->
-					<argLine>-Xmx1024m</argLine>
+					<!-- Options JVM Java 21 sans UseContainerSupport -->
+					<argLine>@{argLine} -Xmx1024m</argLine>
 					<includes>
 						<include>**/*Test.java</include>
 						<include>**/*Tests.java</include>
@@ -167,7 +179,7 @@
 				</configuration>
 			</plugin>
 
-			<!-- JaCoCo Plugin COMPATIBLE Java 21 -->
+			<!-- JaCoCo Plugin CORRIGÉ pour intégration avec Surefire -->
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
@@ -179,8 +191,8 @@
 							<goal>prepare-agent</goal>
 						</goals>
 						<configuration>
-							<!-- Configuration compatible Java 21 -->
-							<destFile>${project.build.directory}/jacoco.exec</destFile>
+							<!-- Utilise @{argLine} pour intégration Surefire -->
+							<propertyName>argLine</propertyName>
 						</configuration>
 					</execution>
 					<execution>
@@ -189,9 +201,6 @@
 						<goals>
 							<goal>report</goal>
 						</goals>
-						<configuration>
-							<dataFile>${project.build.directory}/jacoco.exec</dataFile>
-						</configuration>
 					</execution>
 					<execution>
 						<id>post-integration-test</id>
@@ -252,7 +261,6 @@
 					<retireJsAnalyzerEnabled>false</retireJsAnalyzerEnabled>
 					<nodeAnalyzerEnabled>false</nodeAnalyzerEnabled>
 					<ossindexAnalyzerEnabled>false</ossindexAnalyzerEnabled>
-					<!--<nvdDatafeedEnabled>false</nvdDatafeedEnabled> -->
 					<assemblyAnalyzerEnabled>false</assemblyAnalyzerEnabled>
 					<archiveAnalyzerEnabled>true</archiveAnalyzerEnabled>
 					<jarAnalyzerEnabled>true</jarAnalyzerEnabled>
@@ -268,6 +276,8 @@
 					<!-- Timeout plus court -->
 					<connectionTimeout>10000</connectionTimeout>
 					<readTimeout>30000</readTimeout>
+					<!-- Mode auto-update désactivé pour éviter les erreurs réseau -->
+					<autoUpdate>false</autoUpdate>
 				</configuration>
 			</plugin>
 
@@ -287,10 +297,5 @@
 			</plugin>
 		</plugins>
 	</build>
-
-	<!--
-	NOTE: distributionManagement supprimé - configuré dans settings.xml Nexus via Jenkins
-	Évite la duplication de configuration
-	-->
 
 </project>
