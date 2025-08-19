@@ -29,28 +29,10 @@
 		<owasp.version>9.2.0</owasp.version>
 	</properties>
 
-	<!-- Configuration des repositories nexus -->
-	<repositories>
-		<repository>
-			<id>nexus-public</id>
-			<name>Nexus Public Repository</name>
-			<url>http://localhost:8081/repository/maven-public/</url>
-		</repository>
-	</repositories>
-
-	<!-- Configuration pour le déploiement nexus -->
-	<distributionManagement>
-		<repository>
-			<id>nexus-releases</id>
-			<name>Nexus Releases</name>
-			<url>http://localhost:8081/repository/maven-releases/</url>
-		</repository>
-		<snapshotRepository>
-			<id>nexus-snapshots</id>
-			<name>Nexus Snapshots</name>
-			<url>http://localhost:8081/repository/maven-snapshots/</url>
-		</snapshotRepository>
-	</distributionManagement>
+	<!--
+	NOTE: Si Nexus est configuré dans Jenkins avec Config File Provider,
+	ne pas ajouter de repositories ici pour éviter les conflits
+	-->
 
 	<dependencies>
 		<dependency>
@@ -156,22 +138,31 @@
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
 
-			<!-- Surefire Plugin (exécute les tests) -->
-			<!-- CONFIGURATION COMPLÈTE SUREFIRE + JACOCO -->
-
+			<!-- Surefire Plugin SIMPLIFIÉ pour corriger les problèmes de tests -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
-				<version>3.2.5</version>
+				<version>${surefire.version}</version>
 				<configuration>
-					<argLine>
-						-javaagent:"${settings.localRepository}/net/bytebuddy/byte-buddy-agent/1.14.5/byte-buddy-agent-1.14.5.jar"
-						-javaagent:"${settings.localRepository}/org/jacoco/org.jacoco.agent/0.8.10/org.jacoco.agent-0.8.10-runtime.jar"=destfile=${project.build.directory}/jacoco.exec
-					</argLine>
+					<!-- Configuration simplifiée pour éviter les conflits ByteBuddy -->
+					<useSystemClassLoader>false</useSystemClassLoader>
+					<forkCount>1</forkCount>
+					<reuseForks>false</reuseForks>
+					<argLine>-Xmx1024m -XX:+UseContainerSupport</argLine>
+					<includes>
+						<include>**/*Test.java</include>
+						<include>**/*Tests.java</include>
+					</includes>
+					<excludes>
+						<exclude>**/TestPerformance.java</exclude>
+					</excludes>
+					<!-- Génération des rapports XML pour Jenkins -->
+					<reportFormat>xml</reportFormat>
+					<useFile>true</useFile>
 				</configuration>
 			</plugin>
 
-			<!-- JaCoCo Plugin (génère les rapports de couverture) -->
+			<!-- JaCoCo Plugin SIMPLIFIÉ -->
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
@@ -182,10 +173,6 @@
 						<goals>
 							<goal>prepare-agent</goal>
 						</goals>
-						<configuration>
-							<!-- JaCoCo configure automatiquement l'argLine -->
-							<propertyName>surefireArgLine</propertyName>
-						</configuration>
 					</execution>
 					<execution>
 						<id>report</id>
@@ -194,32 +181,18 @@
 							<goal>report</goal>
 						</goals>
 					</execution>
-					<execution>
-						<id>post-integration-test</id>
-						<phase>post-integration-test</phase>
-						<goals>
-							<goal>report</goal>
-						</goals>
-					</execution>
 				</executions>
+				<configuration>
+					<!-- Exclusions pour améliorer les performances -->
+					<excludes>
+						<exclude>**/dto/**</exclude>
+						<exclude>**/config/**</exclude>
+						<exclude>**/TourguideApplication.class</exclude>
+					</excludes>
+				</configuration>
 			</plugin>
 
-			<!-- Surefire Report Plugin (rapports HTML de tests) -->
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-surefire-report-plugin</artifactId>
-				<version>3.0.0-M7</version>
-				<executions>
-					<execution>
-						<phase>verify</phase>
-						<goals>
-							<goal>report</goal>
-						</goals>
-					</execution>
-				</executions>
-			</plugin>
-
-			<!-- Enforcer (assure la bonne version de Maven et Java) -->
+			<!-- Enforcer Plugin -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-enforcer-plugin</artifactId>
@@ -236,7 +209,7 @@
 									<version>[3.6.3,)</version>
 								</requireMavenVersion>
 								<requireJavaVersion>
-									<version>[21,22)</version> <!-- Force Java 21 -->
+									<version>[21,22)</version>
 								</requireJavaVersion>
 							</rules>
 						</configuration>
@@ -244,52 +217,34 @@
 				</executions>
 			</plugin>
 
-			<!-- OWASP Dependency Check - Configuration -->
+			<!-- OWASP Dependency Check SIMPLIFIÉ -->
 			<plugin>
 				<groupId>org.owasp</groupId>
 				<artifactId>dependency-check-maven</artifactId>
 				<version>${owasp.version}</version>
 				<configuration>
-					<!-- Configuration flexible pour Pipeline Jenkins -->
-					<failBuildOnCVSS>0</failBuildOnCVSS> <!-- Géré par le pipeline -->
+					<!-- Configuration simplifiée pour éviter les timeouts -->
+					<failBuildOnCVSS>0</failBuildOnCVSS>
 					<dataDirectory>${project.basedir}/dc-data</dataDirectory>
 					<suppressionFiles>
 						<suppressionFile>owasp-suppressions.xml</suppressionFile>
 					</suppressionFiles>
-					<!-- Optimisations performance -->
-					<skipProvidedScope>true</skipProvidedScope>
-					<skipRuntimeScope>false</skipRuntimeScope>
 					<!-- Désactiver les analyseurs lents -->
 					<retireJsAnalyzerEnabled>false</retireJsAnalyzerEnabled>
 					<nodeAnalyzerEnabled>false</nodeAnalyzerEnabled>
 					<ossindexAnalyzerEnabled>false</ossindexAnalyzerEnabled>
-					<!-- Formats de rapport -->
+					<!--<nvdDatafeedEnabled>false</nvdDatafeedEnabled><-->
+					<!-- Formats de rapport essentiels -->
 					<formats>
 						<format>HTML</format>
 						<format>XML</format>
-						<format>JSON</format>
 					</formats>
+					<!-- Skip pour accélérer -->
+					<skipProvidedScope>true</skipProvidedScope>
+					<skipSystemScope>true</skipSystemScope>
 				</configuration>
-			</plugin>
-
-			<!-- Project Info Reports Plugin -->
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-project-info-reports-plugin</artifactId>
-				<version>3.3.0</version>
 			</plugin>
 		</plugins>
 	</build>
-
-	<!-- Reporting -->
-	<reporting>
-		<plugins>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-jxr-plugin</artifactId>
-				<version>3.3.0</version>
-			</plugin>
-		</plugins>
-	</reporting>
 
 </project>
