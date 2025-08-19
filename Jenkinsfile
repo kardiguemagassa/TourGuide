@@ -63,8 +63,8 @@ pipeline {
     }
 
     tools {
-        maven 'Maven-3.9.10' // ou 'M3' selon votre configuration Jenkins
-        jdk 'OpenJDK-21'     // ou 'JDK-21' selon votre configuration Jenkins
+        maven 'M3'
+        jdk 'JDK-21'
     }
 
     environment {
