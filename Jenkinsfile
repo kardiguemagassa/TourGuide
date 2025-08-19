@@ -426,15 +426,91 @@ def buildWithNexus(config) {
 
 def buildStandard() {
     sh """
-        mvn clean verify \
-            org.jacoco:jacoco-maven-plugin:prepare-agent \
-            org.jacoco:jacoco-maven-plugin:report \
-            -DskipTests=false \
-            -Dmaven.test.failure.ignore=false \
-            -Djacoco.destFile=target/jacoco.exec \
-            -Djacoco.dataFile=target/jacoco.exec \
-            -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \
-            -B -U -q
+        # ⚠️ VÉRIFICATION CRITIQUE: Test d'intégrité du JAR ByteBuddy après téléchargement
+        echo "🔍 Vérification de l'intégrité des JARs critiques..."
+
+        # Fonction pour tester l'intégrité d'un JAR
+        test_jar_integrity() {
+            local jar_file="\$1"
+            if [ -f "\$jar_file" ]; then
+                echo "🔍 Test de \$jar_file"
+                if jar tf "\$jar_file" > /dev/null 2>&1; then
+                    echo "✅ \$jar_file est valide"
+                    return 0
+                else
+                    echo "❌ \$jar_file est corrompu - suppression"
+                    rm -f "\$jar_file"
+                    return 1
+                fi
+            fi
+            return 1
+        }
+
+        # Build Maven avec retry automatique en cas de JAR corrompu
+        max_attempts=3
+        attempt=1
+
+        while [ \$attempt -le \$max_attempts ]; do
+            echo "🏗️ Tentative de build \$attempt/\$max_attempts..."
+
+            # Build Maven
+            if mvn clean verify \
+                org.jacoco:jacoco-maven-plugin:prepare-agent \
+                org.jacoco:jacoco-maven-plugin:report \
+                -DskipTests=false \
+                -Dmaven.test.failure.ignore=false \
+                -Djacoco.destFile=target/jacoco.exec \
+                -Djacoco.dataFile=target/jacoco.exec \
+                -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \
+                -B -U -q; then
+
+                echo "✅ Build Maven réussi à la tentative \$attempt"
+                break
+
+            else
+                echo "❌ Build Maven échoué à la tentative \$attempt"
+
+                # Test et nettoyage des JARs problématiques
+                echo "🧹 Vérification et nettoyage des JARs corrompus..."
+
+                # Liste des JARs à vérifier
+                JARS_TO_CHECK=(
+                    "\${WORKSPACE}/.m2/repository/net/bytebuddy/byte-buddy-agent/1.14.5/byte-buddy-agent-1.14.5.jar"
+                    "\${WORKSPACE}/.m2/repository/org/jacoco/org.jacoco.agent/0.8.10/org.jacoco.agent-0.8.10-runtime.jar"
+                    "\${WORKSPACE}/.m2/repository/org/mockito/mockito-core/5.17.0/mockito-core-5.17.0.jar"
+                )
+
+                corrupted_found=false
+                for jar in "\${JARS_TO_CHECK[@]}"; do
+                    if ! test_jar_integrity "\$jar"; then
+                        corrupted_found=true
+                    fi
+                done
+
+                if [ "\$corrupted_found" = true ]; then
+                    echo "🧹 JARs corrompus détectés et supprimés - nouvelle tentative"
+                    # Nettoyage agressif
+                    rm -rf \${WORKSPACE}/.m2/repository/net/bytebuddy/ || true
+                    rm -rf \${WORKSPACE}/.m2/repository/org/jacoco/ || true
+                    rm -rf \${WORKSPACE}/.m2/repository/org/mockito/ || true
+
+                    # Attente avant retry
+                    sleep 10
+                else
+                    echo "❌ Aucun JAR corrompu détecté - erreur différente"
+                    exit 1
+                fi
+
+                attempt=\$((attempt + 1))
+            fi
+        done
+
+        if [ \$attempt -gt \$max_attempts ]; then
+            echo "❌ Build échoué après \$max_attempts tentatives"
+            exit 1
+        fi
+
+        echo "✅ Build Maven terminé avec succès"
     """
 }
 
