@@ -150,7 +150,7 @@
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
 
-			<!-- Surefire Plugin CORRIGÉ pour Java 21 -->
+			<!-- Surefire Plugin CORRIGÉ pour Java 21 + Warnings -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
@@ -160,8 +160,8 @@
 					<useSystemClassLoader>false</useSystemClassLoader>
 					<forkCount>1</forkCount>
 					<reuseForks>false</reuseForks>
-					<!-- Options JVM Java 21 sans UseContainerSupport -->
-					<argLine>@{argLine} -Xmx1024m</argLine>
+					<!-- Options JVM Java 21 avec suppression des warnings -->
+					<argLine>@{argLine} -Xmx1024m -XX:+EnableDynamicAgentLoading -Djdk.instrument.traceUsage=false</argLine>
 					<includes>
 						<include>**/*Test.java</include>
 						<include>**/*Tests.java</include>
