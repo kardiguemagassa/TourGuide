@@ -1,4 +1,4 @@
-// Configuration centralisée optimisée avec SonarQube
+// Configuration centralisée optimisée avec SonarQube Jenkins
 def config = [
     emailRecipients: "magassakara@gmail.com",
     containerName: "tourguide-app",
@@ -12,17 +12,12 @@ def config = [
         url: "http://localhost:8081",
         credentialsId: "nexus-credentials"
     ],
-    // Configuration SonarQube
+    // Configuration SonarQube (utilise la config Jenkins)
     sonar: [
-        enabled: true, // ✅ ACTIVÉ pour l'analyse de qualité
-        serverUrl: "http://localhost:9000", // URL de votre serveur SonarQube
-        tokenCredentialsId: "sonar-token", // ID des credentials SonarQube dans Jenkins
+        enabled: true, // ✅ ACTIVÉ - utilise la configuration Jenkins
+        installationName: "SonarQube", // Nom de l'installation dans Jenkins
         projectKey: "tourguide",
-        projectName: "TourGuide Application",
-        sources: "src/main/java",
-        tests: "src/test/java",
-        binaries: "target/classes",
-        testBinaries: "target/test-classes"
+        projectName: "TourGuide Application"
     ],
     timeouts: [
         qualityGate: 2,
@@ -68,9 +63,6 @@ pipeline {
         CONTAINER_TAG = "${getTag(env.BUILD_NUMBER, env.BRANCH_NAME)}"
         MAVEN_OPTS = "-Dmaven.repo.local=${WORKSPACE}/.m2/repository -Xmx1024m"
         PATH = "/usr/local/bin:/usr/bin:/bin:${env.PATH}"
-        // SonarQube
-        SONAR_PROJECT_KEY = "${config.sonar.projectKey}"
-        SONAR_PROJECT_NAME = "${config.sonar.projectName}"
     }
 
     stages {
@@ -84,11 +76,6 @@ pipeline {
                     // Validation Nexus si activé
                     if (config.nexus.enabled) {
                         validateNexusConfiguration(config)
-                    }
-
-                    // Validation SonarQube si activé
-                    if (config.sonar.enabled) {
-                        validateSonarQubeConfiguration(config)
                     }
 
                     displayBuildInfo(config)
@@ -144,7 +131,7 @@ pipeline {
             }
             steps {
                 script {
-                    runSonarQubeAnalysis(config)
+                    runSonarQubeAnalysisJenkins(config)
                 }
             }
         }
@@ -301,63 +288,30 @@ pipeline {
 }
 
 // =============================================================================
-// FONCTIONS SONARQUBE
+// FONCTIONS SONARQUBE AVEC CONFIGURATION JENKINS
 // =============================================================================
 
-def validateSonarQubeConfiguration(config) {
-    echo "🔍 Validation de la configuration SonarQube..."
-    try {
-        // Test de connectivité SonarQube
-        def sonarStatus = sh(
-            script: "curl -s -o /dev/null -w '%{http_code}' ${config.sonar.serverUrl} || echo '000'",
-            returnStdout: true
-        ).trim()
-
-        if (sonarStatus == "200") {
-            echo "✅ SonarQube accessible sur ${config.sonar.serverUrl}"
-        } else {
-            echo "⚠️ SonarQube non accessible (HTTP: ${sonarStatus}) - analyse désactivée"
-            config.sonar.enabled = false
-        }
-
-        // Vérification des credentials SonarQube
-        try {
-            withCredentials([string(credentialsId: config.sonar.tokenCredentialsId, variable: 'SONAR_TOKEN')]) {
-                echo "✅ Token SonarQube configuré"
-            }
-        } catch (Exception e) {
-            echo "❌ Token SonarQube manquant: ${e.getMessage()}"
-            config.sonar.enabled = false
-        }
-
-    } catch (Exception e) {
-        echo "❌ Erreur de configuration SonarQube: ${e.getMessage()}"
-        config.sonar.enabled = false
-    }
-}
-
-def runSonarQubeAnalysis(config) {
+def runSonarQubeAnalysisJenkins(config) {
     if (!config.sonar.enabled) {
         echo "ℹ️ SonarQube désactivé - analyse ignorée"
         return
     }
 
-    echo "🔍 Analyse SonarQube en cours..."
+    echo "🔍 Analyse SonarQube avec configuration Jenkins..."
     try {
-        withCredentials([string(credentialsId: config.sonar.tokenCredentialsId, variable: 'SONAR_TOKEN')]) {
-            withSonarQubeEnv('SonarQube') { // Nom de votre serveur SonarQube dans Jenkins
+        // Utilisation de withSonarQubeEnv qui utilise la configuration Jenkins
+        withSonarQubeEnv(config.sonar.installationName) {
 
-                def settingsOption = ""
-                if (config.nexus.enabled) {
-                    configFileProvider([
-                        configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
-                    ]) {
-                        settingsOption = "-s \$MAVEN_SETTINGS"
-                        runSonarAnalysisWithSettings(config, settingsOption)
-                    }
-                } else {
-                    runSonarAnalysisWithSettings(config, "")
+            def settingsOption = ""
+            if (config.nexus.enabled) {
+                configFileProvider([
+                    configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
+                ]) {
+                    settingsOption = "-s \$MAVEN_SETTINGS"
+                    runSonarAnalysisWithJenkins(config, settingsOption)
                 }
+            } else {
+                runSonarAnalysisWithJenkins(config, "")
             }
         }
         echo "✅ Analyse SonarQube terminée"
@@ -367,22 +321,22 @@ def runSonarQubeAnalysis(config) {
     }
 }
 
-def runSonarAnalysisWithSettings(config, String settingsOption) {
+def runSonarAnalysisWithJenkins(config, String settingsOption) {
     timeout(time: config.timeouts.sonarAnalysis, unit: 'MINUTES') {
         sh """
+            echo "🔍 Lancement de l'analyse SonarQube..."
             mvn sonar:sonar ${settingsOption} \\
                 -Dsonar.projectKey=${config.sonar.projectKey} \\
                 -Dsonar.projectName="${config.sonar.projectName}" \\
-                -Dsonar.host.url=${config.sonar.serverUrl} \\
-                -Dsonar.token=\$SONAR_TOKEN \\
-                -Dsonar.sources=${config.sonar.sources} \\
-                -Dsonar.tests=${config.sonar.tests} \\
-                -Dsonar.java.binaries=${config.sonar.binaries} \\
-                -Dsonar.java.testBinaries=${config.sonar.testBinaries} \\
+                -Dsonar.sources=src/main/java \\
+                -Dsonar.tests=src/test/java \\
+                -Dsonar.java.binaries=target/classes \\
+                -Dsonar.java.testBinaries=target/test-classes \\
                 -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \\
                 -Dsonar.junit.reportPaths=target/surefire-reports \\
                 -Dsonar.java.source=21 \\
                 -Dsonar.java.target=21 \\
+                -Dsonar.exclusions="**/dto/**,**/config/**,**/TourguideApplication.java" \\
                 -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
                 -B -q
         """
@@ -547,7 +501,7 @@ def installLocalJars() {
 }
 
 // =============================================================================
-// FONCTIONS DOCKER CORRIGÉES POUR JAVA 21
+// AUTRES FONCTIONS (TOUTES LES FONCTIONS DOCKER, NEXUS, UTILS, ETC.)
 // =============================================================================
 
 def buildDockerImageJava21Fixed(config) {
@@ -724,10 +678,6 @@ EOF
     echo "✅ Fichier .env Java 21 créé"
 }
 
-// =============================================================================
-// FONCTIONS NEXUS
-// =============================================================================
-
 def validateNexusConfiguration(config) {
     echo "🔍 Validation de la configuration Nexus..."
     try {
@@ -797,7 +747,7 @@ def deployToNexusRepository(config) {
 }
 
 // =============================================================================
-// AUTRES FONCTIONS (GARDER TOUTES LES FONCTIONS EXISTANTES)
+// AUTRES FONCTIONS UTILITAIRES (gardez toutes vos fonctions existantes)
 // =============================================================================
 
 def runOwaspDependencyCheckSimple(config) {
@@ -1220,7 +1170,7 @@ def displayBuildInfo(config) {
 
      🔍 SONARQUBE STATUS:
      • Activé: ${config.sonar.enabled ? "✅" : "❌"}
-     ${config.sonar.enabled ? "• URL: ${config.sonar.serverUrl}" : "• Mode: Sans analyse"}
+     ${config.sonar.enabled ? "• Installation: ${config.sonar.installationName}" : "• Mode: Sans analyse"}
      ${config.sonar.enabled ? "• Project Key: ${config.sonar.projectKey}" : ""}
      ${config.sonar.enabled ? "• Quality Gate: Activé" : ""}
 
@@ -1228,7 +1178,7 @@ def displayBuildInfo(config) {
      • OWASP: Mode simplifié avec Nexus
      • Coverage: JaCoCo standard
      • Tests: Configuration Java 21
-     • SonarQube: ${config.sonar.enabled ? "Analyse complète" : "Désactivé"}
+     • SonarQube: ${config.sonar.enabled ? "Analyse via Jenkins" : "Désactivé"}
 
      🐳 DOCKER:
      • Compose: Configuration Java 21
@@ -1260,10 +1210,10 @@ def sendEnhancedNotification(recipients, config) {
         if (config.sonar.enabled) {
             sonarInfo = """
         🔍 SONARQUBE ANALYSIS:
-        • URL: ${config.sonar.serverUrl}
+        • Installation: ${config.sonar.installationName}
         • Project Key: ${config.sonar.projectKey}
         • Quality Gate: ${status == 'SUCCESS' ? '✅ Passed' : status == 'UNSTABLE' ? '⚠️ Warning' : '❌ Failed'}
-        • Dashboard: ${config.sonar.serverUrl}/dashboard?id=${config.sonar.projectKey}
+        • Dashboard: Accessible via Jenkins SonarQube
         """
         }
 
@@ -1280,7 +1230,7 @@ def sendEnhancedNotification(recipients, config) {
         • Tests: ${env.BUILD_URL}testReport/
         • Coverage: ${env.BUILD_URL}jacoco/
         • Security: ${env.BUILD_URL}OWASP_20Security_20Report/
-        ${config.sonar.enabled ? "• SonarQube: ${config.sonar.serverUrl}/dashboard?id=${config.sonar.projectKey}" : ""}
+        ${config.sonar.enabled ? "• SonarQube: Via Jenkins Dashboard" : ""}
         """
         }
 
@@ -1306,7 +1256,7 @@ def sendEnhancedNotification(recipients, config) {
         • Console: ${env.BUILD_URL}console
         • Workspace: ${env.BUILD_URL}ws/
         ${config.nexus.enabled ? "• Nexus Repository: ${config.nexus.url}" : ""}
-        ${config.sonar.enabled ? "• SonarQube Dashboard: ${config.sonar.serverUrl}/dashboard?id=${config.sonar.projectKey}" : ""}
+        ${config.sonar.enabled ? "• SonarQube: Via Jenkins" : ""}
 
         📅 ${new Date()}
         """
