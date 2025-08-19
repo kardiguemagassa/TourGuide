@@ -67,6 +67,7 @@ pipeline {
         jdk 'JDK-21'
     }
 
+
     environment {
         DOCKER_BUILDKIT = "1"
         COMPOSE_DOCKER_CLI_BUILD = "1"
