@@ -1,15 +1,16 @@
-// Configuration centralisée
+// Configuration centralisée optimisée
 def config = [
     emailRecipients: "magassakara@gmail.com",
     containerName: "tourguide-app",
     serviceName: "tourguide",
     dockerRegistry: "docker.io",
     sonarProjectKey: "tourguide",
-    // ✅ CONFIGURATION NEXUS
+    // Configuration Nexus (optionnelle)
     nexus: [
+        enabled: false, // Mettre à true pour activer Nexus
         configFileId: "maven-settings-nexus",
         url: "http://localhost:8081",
-        credentialsId: "admin/******",
+        credentialsId: "nexus-credentials",
         repositories: [
             releases: "maven-releases",
             snapshots: "maven-snapshots",
@@ -62,8 +63,8 @@ pipeline {
     }
 
     tools {
-        maven 'M3'
-        jdk 'JDK-21'
+        maven 'Maven-3.9.10' // ou 'M3' selon votre configuration Jenkins
+        jdk 'OpenJDK-21'     // ou 'JDK-21' selon votre configuration Jenkins
     }
 
     environment {
@@ -77,8 +78,6 @@ pipeline {
         SONAR_PROJECT_KEY = "${getSonarProjectKey(env.BRANCH_NAME, config.sonar)}"
         MAVEN_OPTS = "-Dmaven.repo.local=${WORKSPACE}/.m2/repository -Xmx1024m"
         PATH = "/usr/local/bin:/usr/bin:/bin:${env.PATH}"
-        NEXUS_URL = "${config.nexus.url}"
-        NEXUS_CONFIG_FILE_ID = "${config.nexus.configFileId}"
     }
 
     stages {
@@ -89,15 +88,20 @@ pipeline {
                     validateEnvironment()
                     env.DOCKER_AVAILABLE = checkDockerAvailability()
                     displayBuildInfo(config)
-                    validateNexusConfiguration(config)
+
+                    // Validation Nexus si activé
+                    if (config.nexus.enabled) {
+                        validateNexusConfiguration(config)
+                    }
                 }
             }
         }
 
-        stage('Show env') {
+        stage('Environment Debug') {
             steps {
                 script {
-                    sh 'printenv'
+                    echo "📋 Variables d'environnement:"
+                    sh 'printenv | grep -E "(JAVA|MAVEN|DOCKER|BRANCH|BUILD)" | sort'
                 }
             }
         }
@@ -105,41 +109,12 @@ pipeline {
         stage('Install Local Dependencies') {
             steps {
                 script {
-                    echo "📦 Installation des dépendances locales avec Nexus..."
+                    echo "📦 Installation des dépendances locales..."
 
-                    configFileProvider([
-                        configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
-                    ]) {
-                        sh '''
-                            echo "📋 Utilisation du settings.xml Nexus: $MAVEN_SETTINGS"
-
-                            mvn install:install-file \
-                                -s $MAVEN_SETTINGS \
-                                -Dfile=libs/gpsUtil.jar \
-                                -DgroupId=gpsUtil \
-                                -DartifactId=gpsUtil \
-                                -Dversion=1.0.0 \
-                                -Dpackaging=jar \
-                                -Dmaven.repo.local=${WORKSPACE}/.m2/repository
-
-                            mvn install:install-file \
-                                -s $MAVEN_SETTINGS \
-                                -Dfile=libs/TripPricer.jar \
-                                -DgroupId=tripPricer \
-                                -DartifactId=tripPricer \
-                                -Dversion=1.0.0 \
-                                -Dpackaging=jar \
-                                -Dmaven.repo.local=${WORKSPACE}/.m2/repository
-
-                            mvn install:install-file \
-                                -s $MAVEN_SETTINGS \
-                                -Dfile=libs/rewardCentral.jar \
-                                -DgroupId=rewardCentral \
-                                -DartifactId=rewardCentral \
-                                -Dversion=1.0.0 \
-                                -Dpackaging=jar \
-                                -Dmaven.repo.local=${WORKSPACE}/.m2/repository
-                        '''
+                    if (config.nexus.enabled) {
+                        installDependenciesWithNexus(config)
+                    } else {
+                        installDependenciesStandard()
                     }
                 }
             }
@@ -148,26 +123,12 @@ pipeline {
         stage('Build & Test') {
             steps {
                 script {
-                    echo "🏗️ Build et tests Maven avec Nexus..."
+                    echo "🏗️ Build et tests Maven..."
 
-                    configFileProvider([
-                        configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
-                    ]) {
-                        sh """
-                            echo "📋 Settings Nexus: \$MAVEN_SETTINGS"
-                            echo "🔗 Repository Nexus: ${config.nexus.url}"
-
-                            mvn clean verify \
-                                -s \$MAVEN_SETTINGS \
-                                org.jacoco:jacoco-maven-plugin:prepare-agent \
-                                org.jacoco:jacoco-maven-plugin:report \
-                                -DskipTests=false \
-                                -Dmaven.test.failure.ignore=false \
-                                -Djacoco.destFile=target/jacoco.exec \
-                                -Djacoco.dataFile=target/jacoco.exec \
-                                -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
-                                -B -U -q
-                        """
+                    if (config.nexus.enabled) {
+                        buildWithNexus(config)
+                    } else {
+                        buildStandard()
                     }
                 }
             }
@@ -182,10 +143,13 @@ pipeline {
 
         stage('Deploy to Nexus') {
             when {
-                anyOf {
-                    branch 'master'
-                    branch 'develop'
-                    branch 'nexustest'
+                allOf {
+                    expression { return config.nexus.enabled }
+                    anyOf {
+                        branch 'master'
+                        branch 'develop'
+                        branch 'nexustest'
+                    }
                 }
             }
             steps {
@@ -205,7 +169,11 @@ pipeline {
             }
             steps {
                 script {
-                    performSonarAnalysisWithNexus(config)
+                    if (config.nexus.enabled) {
+                        performSonarAnalysisWithNexus(config)
+                    } else {
+                        performSonarAnalysis(config)
+                    }
                 }
             }
         }
@@ -242,7 +210,11 @@ pipeline {
                     }
                     steps {
                         script {
-                            runOwaspDependencyCheckWithNexus(config)
+                            if (config.nexus.enabled) {
+                                runOwaspDependencyCheckWithNexus(config)
+                            } else {
+                                runOwaspDependencyCheckWithNVD(config)
+                            }
                         }
                     }
                     post {
@@ -257,7 +229,11 @@ pipeline {
                 stage('Maven Security Audit') {
                     steps {
                         script {
-                            runMavenSecurityAuditWithNexus(config)
+                            if (config.nexus.enabled) {
+                                runMavenSecurityAuditWithNexus(config)
+                            } else {
+                                runMavenSecurityAudit()
+                            }
                         }
                     }
                 }
@@ -347,7 +323,12 @@ pipeline {
                     if (env.DOCKER_AVAILABLE == "true") {
                         cleanupDockerImages(config)
                     }
-                    sendEnhancedNotificationWithNexus(config.emailRecipients, config)
+
+                    if (config.nexus.enabled) {
+                        sendEnhancedNotificationWithNexus(config.emailRecipients, config)
+                    } else {
+                        sendEnhancedNotification(config.emailRecipients, config)
+                    }
                 } catch (Exception e) {
                     echo "Erreur dans post always: ${e.getMessage()}"
                 } finally {
@@ -359,23 +340,98 @@ pipeline {
 }
 
 // =============================================================================
-// FONCTIONS NEXUS
+// FONCTIONS MAVEN AVEC SUPPORT NEXUS CONDITIONNEL
+// =============================================================================
+
+def installDependenciesWithNexus(config) {
+    echo "📦 Installation des dépendances locales avec Nexus..."
+    configFileProvider([
+        configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
+    ]) {
+        installLocalJars('$MAVEN_SETTINGS')
+    }
+}
+
+def installDependenciesStandard() {
+    echo "📦 Installation des dépendances locales (standard)..."
+    installLocalJars()
+}
+
+def installLocalJars(String settingsPath = '') {
+    def settingsOption = settingsPath ? "-s ${settingsPath}" : ""
+
+    sh """
+        mvn install:install-file ${settingsOption} \
+            -Dfile=libs/gpsUtil.jar \
+            -DgroupId=gpsUtil \
+            -DartifactId=gpsUtil \
+            -Dversion=1.0.0 \
+            -Dpackaging=jar \
+            -Dmaven.repo.local=\${WORKSPACE}/.m2/repository
+
+        mvn install:install-file ${settingsOption} \
+            -Dfile=libs/TripPricer.jar \
+            -DgroupId=tripPricer \
+            -DartifactId=tripPricer \
+            -Dversion=1.0.0 \
+            -Dpackaging=jar \
+            -Dmaven.repo.local=\${WORKSPACE}/.m2/repository
+
+        mvn install:install-file ${settingsOption} \
+            -Dfile=libs/rewardCentral.jar \
+            -DgroupId=rewardCentral \
+            -DartifactId=rewardCentral \
+            -Dversion=1.0.0 \
+            -Dpackaging=jar \
+            -Dmaven.repo.local=\${WORKSPACE}/.m2/repository
+    """
+}
+
+def buildWithNexus(config) {
+    configFileProvider([
+        configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
+    ]) {
+        sh """
+            mvn clean verify \
+                -s \$MAVEN_SETTINGS \
+                org.jacoco:jacoco-maven-plugin:prepare-agent \
+                org.jacoco:jacoco-maven-plugin:report \
+                -DskipTests=false \
+                -Dmaven.test.failure.ignore=false \
+                -Djacoco.destFile=target/jacoco.exec \
+                -Djacoco.dataFile=target/jacoco.exec \
+                -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \
+                -B -U -q
+        """
+    }
+}
+
+def buildStandard() {
+    sh """
+        mvn clean verify \
+            org.jacoco:jacoco-maven-plugin:prepare-agent \
+            org.jacoco:jacoco-maven-plugin:report \
+            -DskipTests=false \
+            -Dmaven.test.failure.ignore=false \
+            -Djacoco.destFile=target/jacoco.exec \
+            -Djacoco.dataFile=target/jacoco.exec \
+            -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \
+            -B -U -q
+    """
+}
+
+// =============================================================================
+// FONCTIONS NEXUS (OPTIONNELLES)
 // =============================================================================
 
 def validateNexusConfiguration(config) {
     echo "🔍 Validation de la configuration Nexus..."
-
     try {
         configFileProvider([
             configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
         ]) {
             sh '''
-                echo "✅ Config File Provider accessible"
-                echo "📋 Fichier settings.xml: $MAVEN_SETTINGS"
-
-                if grep -q "nexus-releases" $MAVEN_SETTINGS && \
-                   grep -q "nexus-snapshots" $MAVEN_SETTINGS && \
-                   grep -q "nexus-public" $MAVEN_SETTINGS; then
+                if grep -q "nexus" $MAVEN_SETTINGS; then
                     echo "✅ Configuration Nexus trouvée dans settings.xml"
                 else
                     echo "❌ Configuration Nexus manquante dans settings.xml"
@@ -385,7 +441,7 @@ def validateNexusConfiguration(config) {
         }
 
         def nexusStatus = sh(
-            script: "curl -s -o /dev/null -w '%{http_code}' ${config.nexus.url}",
+            script: "curl -s -o /dev/null -w '%{http_code}' ${config.nexus.url} || echo '000'",
             returnStdout: true
         ).trim()
 
@@ -393,91 +449,40 @@ def validateNexusConfiguration(config) {
             echo "✅ Nexus accessible sur ${config.nexus.url}"
         } else {
             echo "⚠️ Nexus non accessible (HTTP: ${nexusStatus})"
-            echo "💡 Le build continuera, mais le déploiement vers Nexus pourrait échouer"
         }
-
     } catch (Exception e) {
-        error "❌ Erreur de configuration Nexus: ${e.getMessage()}"
+        echo "❌ Erreur de configuration Nexus: ${e.getMessage()}"
+        throw e
     }
 }
 
 def deployToNexusRepository(config) {
     echo "📤 Déploiement vers Nexus Repository..."
-
     try {
         configFileProvider([
             configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
         ]) {
             sh """
-                echo "🚀 Déploiement vers Nexus Repository Manager"
-                echo "📋 Settings: \$MAVEN_SETTINGS"
-                echo "🔗 Nexus URL: ${config.nexus.url}"
-                echo "📦 Repository: ${isSnapshot() ? config.nexus.repositories.snapshots : config.nexus.repositories.releases}"
-
-                mvn help:evaluate -Dexpression=project.groupId -q -DforceStdout -s \$MAVEN_SETTINGS
-                mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout -s \$MAVEN_SETTINGS
-                mvn help:evaluate -Dexpression=project.version -q -DforceStdout -s \$MAVEN_SETTINGS
-
                 mvn deploy -s \$MAVEN_SETTINGS \
                     -DskipTests=true \
-                    -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
+                    -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \
                     -DretryFailedDeploymentCount=3 \
                     -B -q
-
-                echo "✅ Artefact déployé avec succès vers Nexus"
             """
         }
-
-        verifyNexusDeployment(config)
-
+        echo "✅ Artefact déployé avec succès vers Nexus"
     } catch (Exception e) {
         echo "❌ Erreur lors du déploiement vers Nexus: ${e.getMessage()}"
         currentBuild.result = 'UNSTABLE'
-        echo "⏭️ Pipeline continue malgré l'erreur de déploiement Nexus"
     }
 }
 
-def verifyNexusDeployment(config) {
-    echo "🔍 Vérification du déploiement Nexus..."
-
-    try {
-        configFileProvider([
-            configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
-        ]) {
-            sh """
-                GROUP_ID=\$(mvn help:evaluate -Dexpression=project.groupId -q -DforceStdout -s \$MAVEN_SETTINGS)
-                ARTIFACT_ID=\$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout -s \$MAVEN_SETTINGS)
-                VERSION=\$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout -s \$MAVEN_SETTINGS)
-
-                echo "🔍 Vérification de l'artefact:"
-                echo "  Group ID: \$GROUP_ID"
-                echo "  Artifact ID: \$ARTIFACT_ID"
-                echo "  Version: \$VERSION"
-
-                REPO_NAME="${isSnapshot() ? config.nexus.repositories.snapshots : config.nexus.repositories.releases}"
-                GROUP_PATH=\$(echo \$GROUP_ID | tr '.' '/')
-                ARTIFACT_URL="${config.nexus.url}/repository/\$REPO_NAME/\$GROUP_PATH/\$ARTIFACT_ID/\$VERSION/"
-
-                echo "🌐 URL de vérification: \$ARTIFACT_URL"
-
-                HTTP_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" "\$ARTIFACT_URL")
-
-                if [ "\$HTTP_STATUS" = "200" ]; then
-                    echo "✅ Artefact vérifié avec succès dans Nexus"
-                else
-                    echo "⚠️ Impossible de vérifier l'artefact (HTTP: \$HTTP_STATUS)"
-                    echo "💡 L'artefact pourrait être déployé mais pas encore indexé"
-                fi
-            """
-        }
-    } catch (Exception e) {
-        echo "⚠️ Erreur de vérification Nexus: ${e.getMessage()}"
-    }
-}
+// =============================================================================
+// FONCTIONS SONAR AVEC SUPPORT NEXUS CONDITIONNEL
+// =============================================================================
 
 def performSonarAnalysisWithNexus(config) {
     echo "📊 Analyse SonarQube avec Nexus..."
-
     withSonarQubeEnv('SonarQube') {
         withCredentials([string(credentialsId: 'sonartoken', variable: 'SONAR_TOKEN')]) {
             configFileProvider([
@@ -486,13 +491,13 @@ def performSonarAnalysisWithNexus(config) {
                 sh """
                     mvn sonar:sonar \
                         -s \$MAVEN_SETTINGS \
-                        -Dsonar.projectKey=${env.SONAR_PROJECT_KEY} \
+                        -Dsonar.projectKey=\${SONAR_PROJECT_KEY} \
                         -Dsonar.host.url=\$SONAR_HOST_URL \
                         -Dsonar.token=\${SONAR_TOKEN} \
                         -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
                         -Dsonar.java.source=21 \
                         -Dsonar.java.target=21 \
-                        -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
+                        -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \
                         -B -q
                 """
             }
@@ -500,98 +505,125 @@ def performSonarAnalysisWithNexus(config) {
     }
 }
 
-def runOwaspDependencyCheckWithNexus(config) {
-    try {
-        echo "🛡️ OWASP Dependency Check avec Nexus..."
-
-        configFileProvider([
-            configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
-        ]) {
-            try {
-                withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
-                    sh "rm -rf ${WORKSPACE}/owasp-data || true"
-                    sh "mkdir -p ${WORKSPACE}/owasp-data"
-
-                    timeout(time: config.timeouts.owaspCheck, unit: 'MINUTES') {
-                        def exitCode = sh(script: """
-                            mvn org.owasp:dependency-check-maven:check \
-                                -s \$MAVEN_SETTINGS \
-                                -DnvdApiKey=\${NVD_API_KEY} \
-                                -DdataDirectory=${WORKSPACE}/owasp-data \
-                                -DautoUpdate=true \
-                                -DcveValidForHours=24 \
-                                -DfailBuildOnCVSS=${config.owasp.cvssThreshold} \
-                                -DsuppressFailureOnError=true \
-                                -DfailOnError=false \
-                                -Dformat=ALL \
-                                -DprettyPrint=true \
-                                -DretireJsAnalyzerEnabled=false \
-                                -DnodeAnalyzerEnabled=false \
-                                -DossindexAnalyzerEnabled=false \
-                                -DnvdDatafeedEnabled=true \
-                                -DnvdMaxRetryCount=${config.owasp.maxRetries} \
-                                -DnvdDelay=4000 \
-                                -DskipSystemScope=true \
-                                -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
-                                -B -q
-                        """, returnStatus: true)
-
-                        handleOwaspResult(exitCode)
-                    }
-                }
-            } catch (Exception credException) {
-                echo "⚠️ Clé NVD API non disponible, basculement vers mode local"
-                runOwaspWithoutNVDWithNexus(config)
-            }
+def performSonarAnalysis(config) {
+    echo "📊 Analyse SonarQube..."
+    withSonarQubeEnv('SonarQube') {
+        withCredentials([string(credentialsId: 'sonartoken', variable: 'SONAR_TOKEN')]) {
+            sh """
+                mvn sonar:sonar \
+                    -Dsonar.projectKey=\${SONAR_PROJECT_KEY} \
+                    -Dsonar.host.url=\$SONAR_HOST_URL \
+                    -Dsonar.token=\${SONAR_TOKEN} \
+                    -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+                    -Dsonar.java.source=21 \
+                    -Dsonar.java.target=21 \
+                    -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \
+                    -B -q
+            """
         }
-
-    } catch (Exception e) {
-        echo "🚨 Erreur OWASP avec Nexus: ${e.getMessage()}"
-        runOwaspWithoutNVDWithNexus(config)
     }
 }
 
-def runOwaspWithoutNVDWithNexus(config) {
-    try {
-        echo "🛡️ OWASP en mode local avec Nexus..."
+// =============================================================================
+// FONCTIONS OWASP AMÉLIORÉES
+// =============================================================================
 
+def runOwaspDependencyCheckWithNexus(config) {
+    try {
+        echo "🛡️ OWASP Dependency Check avec Nexus..."
         configFileProvider([
             configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
         ]) {
-            sh "rm -rf ${WORKSPACE}/owasp-data || true"
-            sh "mkdir -p ${WORKSPACE}/owasp-data"
+            runOwaspDependencyCheck(config, '-s $MAVEN_SETTINGS')
+        }
+    } catch (Exception e) {
+        echo "🚨 Erreur OWASP avec Nexus: ${e.getMessage()}"
+        runOwaspWithoutNVD(config, '-s $MAVEN_SETTINGS')
+    }
+}
+
+def runOwaspDependencyCheckWithNVD(config) {
+    try {
+        echo "🛡️ OWASP Dependency Check avec NVD API..."
+        runOwaspDependencyCheck(config, '')
+    } catch (Exception e) {
+        echo "🚨 Erreur OWASP: ${e.getMessage()}"
+        runOwaspWithoutNVD(config, '')
+    }
+}
+
+def runOwaspDependencyCheck(config, String mavenSettings) {
+    try {
+        withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
+            sh "rm -rf \${WORKSPACE}/owasp-data || true"
+            sh "mkdir -p \${WORKSPACE}/owasp-data"
 
             timeout(time: config.timeouts.owaspCheck, unit: 'MINUTES') {
                 def exitCode = sh(script: """
-                    mvn org.owasp:dependency-check-maven:check \
-                        -s \$MAVEN_SETTINGS \
-                        -DdataDirectory=${WORKSPACE}/owasp-data \
-                        -DautoUpdate=false \
+                    mvn org.owasp:dependency-check-maven:check ${mavenSettings} \
+                        -DnvdApiKey=\${NVD_API_KEY} \
+                        -DdataDirectory=\${WORKSPACE}/owasp-data \
+                        -DautoUpdate=true \
+                        -DcveValidForHours=24 \
                         -DfailBuildOnCVSS=${config.owasp.cvssThreshold} \
                         -DsuppressFailureOnError=true \
                         -DfailOnError=false \
-                        -Dformat=HTML,XML \
+                        -Dformat=ALL \
                         -DprettyPrint=true \
                         -DretireJsAnalyzerEnabled=false \
                         -DnodeAnalyzerEnabled=false \
                         -DossindexAnalyzerEnabled=false \
-                        -DnvdDatafeedEnabled=false \
+                        -DnvdDatafeedEnabled=true \
+                        -DnvdMaxRetryCount=${config.owasp.maxRetries} \
+                        -DnvdDelay=4000 \
                         -DskipSystemScope=true \
-                        -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
+                        -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \
                         -B -q
                 """, returnStatus: true)
 
-                if (exitCode == 0) {
-                    echo "✅ OWASP: Analyse locale avec Nexus terminée avec succès"
-                } else {
-                    echo "⚠️ OWASP: Analyse locale avec avertissements (code: ${exitCode})"
-                    currentBuild.result = 'UNSTABLE'
-                }
+                handleOwaspResult(exitCode)
             }
         }
+    } catch (Exception credException) {
+        echo "⚠️ Clé NVD API non disponible, basculement vers mode local"
+        throw credException
+    }
+}
 
+def runOwaspWithoutNVD(config, String mavenSettings) {
+    try {
+        echo "🛡️ OWASP en mode local..."
+        sh "rm -rf \${WORKSPACE}/owasp-data || true"
+        sh "mkdir -p \${WORKSPACE}/owasp-data"
+
+        timeout(time: config.timeouts.owaspCheck, unit: 'MINUTES') {
+            def exitCode = sh(script: """
+                mvn org.owasp:dependency-check-maven:check ${mavenSettings} \
+                    -DdataDirectory=\${WORKSPACE}/owasp-data \
+                    -DautoUpdate=false \
+                    -DfailBuildOnCVSS=${config.owasp.cvssThreshold} \
+                    -DsuppressFailureOnError=true \
+                    -DfailOnError=false \
+                    -Dformat=HTML,XML \
+                    -DprettyPrint=true \
+                    -DretireJsAnalyzerEnabled=false \
+                    -DnodeAnalyzerEnabled=false \
+                    -DossindexAnalyzerEnabled=false \
+                    -DnvdDatafeedEnabled=false \
+                    -DskipSystemScope=true \
+                    -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \
+                    -B -q
+            """, returnStatus: true)
+
+            if (exitCode == 0) {
+                echo "✅ OWASP: Analyse locale terminée avec succès"
+            } else {
+                echo "⚠️ OWASP: Analyse locale avec avertissements (code: ${exitCode})"
+                currentBuild.result = 'UNSTABLE'
+            }
+        }
     } catch (Exception e) {
-        echo "🚨 Erreur OWASP mode local avec Nexus: ${e.getMessage()}"
+        echo "🚨 Erreur OWASP mode local: ${e.getMessage()}"
         createOwaspErrorReport(e)
         currentBuild.result = 'UNSTABLE'
     }
@@ -600,7 +632,6 @@ def runOwaspWithoutNVDWithNexus(config) {
 def runMavenSecurityAuditWithNexus(config) {
     try {
         echo "🔍 Audit Maven avec Nexus..."
-
         configFileProvider([
             configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
         ]) {
@@ -608,7 +639,7 @@ def runMavenSecurityAuditWithNexus(config) {
                 sh """
                     mvn versions:display-dependency-updates \
                         -s \$MAVEN_SETTINGS \
-                        -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
+                        -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \
                         -B -q
                 """
             }
@@ -619,79 +650,30 @@ def runMavenSecurityAuditWithNexus(config) {
     }
 }
 
-def sendEnhancedNotificationWithNexus(recipients, config) {
+def runMavenSecurityAudit() {
     try {
-        def status = currentBuild.currentResult ?: 'SUCCESS'
-        def statusIcon = ['SUCCESS': '✅', 'FAILURE': '❌', 'UNSTABLE': '⚠️', 'ABORTED': '🛑'][status] ?: '❓'
-
-        def subject = "[Jenkins] TourGuide - Build #${env.BUILD_NUMBER} - ${status} (${env.BRANCH_NAME})"
-
-        def nexusInfo = ""
-        if (status == 'SUCCESS' || status == 'UNSTABLE') {
-            nexusInfo = """
-        📦 NEXUS REPOSITORY:
-        • URL: ${config.nexus.url}
-        • Repository: ${isSnapshot() ? config.nexus.repositories.snapshots : config.nexus.repositories.releases}
-        • Artefact déployé: ${status == 'SUCCESS' ? '✅' : '⚠️'}
-        • Browse: ${config.nexus.url}/#browse/browse:${isSnapshot() ? config.nexus.repositories.snapshots : config.nexus.repositories.releases}
-        """
+        echo "🔍 Audit Maven des dépendances..."
+        timeout(time: 3, unit: 'MINUTES') {
+            sh """
+                mvn versions:display-dependency-updates \
+                    -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \
+                    -B -q
+            """
         }
-
-        def deploymentInfo = ""
-        if (env.DOCKER_AVAILABLE == "true" && (status == 'SUCCESS' || status == 'UNSTABLE')) {
-            deploymentInfo = """
-        🚀 DÉPLOIEMENT RÉUSSI:
-        • Application: http://localhost:${env.HTTP_PORT}
-        • Health Check: http://localhost:${env.HTTP_PORT}/actuator/health
-        • Environnement: ${env.ENV_NAME}
-        • Container: tourguide-app-${env.BRANCH_NAME}-${env.BUILD_NUMBER}
-
-        📊 RAPPORTS:
-        • Coverage JaCoCo: ${env.BUILD_URL}jacoco/
-        • Security OWASP: ${env.BUILD_URL}OWASP_20Security_20Report/
-        """
-        }
-
-        def body = """
-        ${statusIcon} BUILD ${status} - TourGuide avec Nexus
-
-        📋 DÉTAILS:
-        • Build: #${env.BUILD_NUMBER}
-        • Branche: ${env.BRANCH_NAME}
-        • Environnement: ${env.ENV_NAME}
-        • Port: ${env.HTTP_PORT}
-        • Java: 21
-        • Maven: Config File Provider
-        • Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅" : "❌"}
-        • Durée: ${currentBuild.durationString ?: 'N/A'}
-
-        ${nexusInfo}
-        ${deploymentInfo}
-
-        🔗 LIENS:
-        • Console Jenkins: ${env.BUILD_URL}console
-        • Workspace: ${env.BUILD_URL}ws/
-        • Nexus Repository: ${config.nexus.url}
-
-        📅 Build exécuté le ${new Date()}
-        🏗️ Jenkins: ${env.JENKINS_URL}
-        """
-
-        mail(to: recipients, subject: subject, body: body, mimeType: 'text/plain')
-        echo "📧 Notification avec infos Nexus envoyée à: ${recipients}"
-
+        echo "✅ Audit Maven terminé"
     } catch (Exception e) {
-        echo "❌ Erreur notification: ${e.getMessage()}"
+        echo "⚠️ Audit Maven: ${e.getMessage()}"
     }
 }
 
 // =============================================================================
-// FONCTION PUBLICATION TESTS CORRIGÉE (SANS $CLASS)
+// FONCTION PUBLICATION TESTS ET COUVERTURE ROBUSTE
 // =============================================================================
 
 def publishTestAndCoverageResults() {
     echo "📊 Publication des résultats de tests et couverture..."
 
+    // Diagnostic des fichiers de tests
     sh '''
         echo "🔍 DIAGNOSTIC COMPLET DES FICHIERS DE TESTS"
         echo "=========================================="
@@ -713,6 +695,7 @@ def publishTestAndCoverageResults() {
         done
     '''
 
+    // Recherche intelligente des fichiers de tests
     def testReportPaths = [
         'target/surefire-reports/TEST-*.xml',
         'target/surefire-reports/*.xml',
@@ -741,8 +724,9 @@ def publishTestAndCoverageResults() {
         }
     }
 
+    // Publication des tests avec fallback
     if (testFilesFound && workingPattern) {
-        echo "📤 Tentative de publication avec le pattern: ${workingPattern}"
+        echo "📤 Publication des tests avec le pattern: ${workingPattern}"
 
         try {
             junit(
@@ -765,14 +749,16 @@ def publishTestAndCoverageResults() {
             } catch (Exception e2) {
                 echo "⚠️ publishTestResults() échoué: ${e2.getMessage()}"
 
+                // Archivage de secours
                 try {
                     archiveArtifacts(
                         artifacts: workingPattern,
                         allowEmptyArchive: true,
                         fingerprint: false
                     )
-                    echo "✅ Fichiers de tests archivés avec archiveArtifacts()"
+                    echo "✅ Fichiers de tests archivés"
 
+                    // Résumé manuel des tests
                     sh """
                         echo "📊 RÉSUMÉ DES TESTS:"
                         echo "==================="
@@ -782,68 +768,48 @@ def publishTestAndCoverageResults() {
 
                         for file in ${workingPattern}; do
                             if [ -f "\$file" ]; then
-                                echo "📋 Analyse du fichier: \$file"
-
                                 TESTS=\$(grep -o 'tests="[0-9]*"' "\$file" | cut -d'"' -f2 || echo "0")
                                 FAILURES=\$(grep -o 'failures="[0-9]*"' "\$file" | cut -d'"' -f2 || echo "0")
                                 ERRORS=\$(grep -o 'errors="[0-9]*"' "\$file" | cut -d'"' -f2 || echo "0")
 
                                 if [ ! -z "\$TESTS" ] && [ "\$TESTS" != "0" ]; then
-                                    echo "  ✅ Tests: \$TESTS"
-                                    echo "  ❌ Échecs: \$FAILURES"
-                                    echo "  🚨 Erreurs: \$ERRORS"
-
+                                    echo "  Tests: \$TESTS, Échecs: \$FAILURES, Erreurs: \$ERRORS"
                                     TOTAL_TESTS=\$((TOTAL_TESTS + TESTS))
                                     FAILED_TESTS=\$((FAILED_TESTS + FAILURES + ERRORS))
                                 fi
                             fi
                         done
 
-                        echo ""
                         echo "🎯 RÉSULTATS GLOBAUX:"
-                        echo "Total des tests: \$TOTAL_TESTS"
-                        echo "Tests échoués: \$FAILED_TESTS"
-                        echo "Tests réussis: \$((TOTAL_TESTS - FAILED_TESTS))"
-
-                        if [ \$FAILED_TESTS -gt 0 ]; then
-                            echo "⚠️ Il y a des tests en échec"
-                        else
-                            echo "✅ Tous les tests sont passés"
-                        fi
+                        echo "Total: \$TOTAL_TESTS, Réussis: \$((TOTAL_TESTS - FAILED_TESTS)), Échoués: \$FAILED_TESTS"
                     """
-
                 } catch (Exception e3) {
-                    echo "❌ Toutes les méthodes ont échoué:"
-                    echo "  junit(): ${e1.getMessage()}"
-                    echo "  publishTestResults(): ${e2.getMessage()}"
-                    echo "  archiveArtifacts(): ${e3.getMessage()}"
-                    echo "⏭️ Continuation du pipeline sans publication de tests"
+                    echo "❌ Toutes les méthodes ont échoué"
                 }
             }
         }
     } else {
-        echo "❌ Aucun fichier de test trouvé avec les patterns testés"
+        echo "❌ Aucun fichier de test trouvé"
 
         sh '''
             echo "=== DIAGNOSTIC D'URGENCE ==="
             echo "Répertoire de travail: $(pwd)"
-            echo "Contenu complet de target/:"
+            echo "Contenu de target/:"
             find target -type f 2>/dev/null | head -20 || echo "target/ inaccessible"
 
-            echo "Tous les fichiers .xml dans le projet:"
+            echo "Tous les fichiers .xml:"
             find . -name "*.xml" -type f 2>/dev/null | grep -v ".git" | head -20
-
-            echo "Vérification Maven:"
-            mvn -version || echo "Maven non disponible"
         '''
     }
 
+    // Publication JaCoCo
     publishJacocoReports()
 }
 
 def publishJacocoReports() {
     echo "📊 Publication des rapports JaCoCo..."
 
+    // Rapport HTML
     try {
         if (fileExists('target/site/jacoco/index.html')) {
             publishHTML([
@@ -863,6 +829,7 @@ def publishJacocoReports() {
         echo "⚠️ Erreur publication HTML JaCoCo: ${e.getMessage()}"
     }
 
+    // Métriques JaCoCo
     try {
         if (fileExists('target/jacoco.exec')) {
             jacoco(
@@ -879,6 +846,7 @@ def publishJacocoReports() {
         echo "⚠️ Erreur métriques JaCoCo: ${e.getMessage()}"
     }
 
+    // Archivage des artefacts
     try {
         def artifactsToArchive = []
         if (fileExists('target/jacoco.exec')) {
@@ -902,193 +870,8 @@ def publishJacocoReports() {
 }
 
 // =============================================================================
-// FONCTIONS UTILITAIRES
+// FONCTIONS DOCKER AMÉLIORÉES (macOS COMPATIBLE)
 // =============================================================================
-
-def validateEnvironment() {
-    echo "🔍 Validation de l'environnement..."
-
-    sh """
-        java -version
-        echo "JAVA_HOME: \$JAVA_HOME"
-    """
-
-    sh """
-        mvn -version
-    """
-
-    sh """
-        df -h . | tail -1 | awk '{print "💾 Espace disque: " \$4 " disponible (" \$5 " utilisé)"}'
-    """
-
-    def criticalFiles = ['pom.xml', 'src/main/java']
-    criticalFiles.each { file ->
-        if (!fileExists(file)) {
-            error "❌ Fichier/dossier critique manquant: ${file}"
-        }
-    }
-}
-
-def validateDockerPrerequisites() {
-    if (env.DOCKER_AVAILABLE != "true") {
-        error "🐳 Docker non disponible"
-    }
-
-    def requiredFiles = ['Dockerfile']
-    requiredFiles.each { file ->
-        if (!fileExists(file)) {
-            error "📄 Fichier requis manquant: ${file}"
-        }
-    }
-
-    def jarFiles = findFiles(glob: 'target/*.jar').findAll {
-        it.name.endsWith('.jar') && !it.name.contains('sources') && !it.name.contains('javadoc')
-    }
-
-    if (jarFiles.length == 0) {
-        error "📦 Aucun JAR exécutable trouvé"
-    }
-
-    echo "📦 JAR trouvé: ${jarFiles[0].path}"
-}
-
-def displayBuildInfo(config) {
-    echo """
-    ================================================================================
-                        🚀 CONFIGURATION BUILD TOURGUIDE AVEC NEXUS
-    ================================================================================
-     Build #: ${env.BUILD_NUMBER}
-     Branch: ${env.BRANCH_NAME}
-     Environment: ${env.ENV_NAME}
-     Port externe: ${env.HTTP_PORT}
-     Java: 21
-     Maven: Config File Provider (${config.nexus.configFileId})
-     Nexus: ${config.nexus.url}
-     Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Disponible" : "⚠️ Indisponible"}
-     Tag: ${env.CONTAINER_TAG}
-     Service: ${config.serviceName}
-
-     📦 NEXUS REPOSITORIES:
-     • Public: ${config.nexus.repositories.public}
-     • Releases: ${config.nexus.repositories.releases}
-     • Snapshots: ${config.nexus.repositories.snapshots}
-
-     🔧 Configuration des ports:
-     • dev (default) : 8090
-     • uat (develop) : 8091
-     • prod (master) : 8092
-
-     ⚙️ CONFIGURATION NEXUS:
-     • Config File ID: ${config.nexus.configFileId}
-     • URL: ${config.nexus.url}
-     • Credentials: Injection automatique Jenkins
-     • Security: Config File Provider sécurisé
-    ================================================================================
-    """
-}
-
-def isSnapshot() {
-    try {
-        def version = sh(
-            script: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout 2>/dev/null || echo 'unknown'",
-            returnStdout: true
-        ).trim()
-        return version.contains('SNAPSHOT')
-    } catch (Exception e) {
-        echo "⚠️ Impossible de déterminer si c'est un SNAPSHOT: ${e.getMessage()}"
-        return true
-    }
-}
-
-def handleOwaspResult(exitCode) {
-    switch(exitCode) {
-        case 0:
-            echo "✅ OWASP: Aucune vulnérabilité critique détectée"
-            break
-        case 1:
-            echo "⚠️ OWASP: Vulnérabilités détectées mais sous le seuil configuré"
-            currentBuild.result = 'UNSTABLE'
-            break
-        default:
-            echo "❌ OWASP: Erreur lors de l'analyse (code: ${exitCode})"
-            currentBuild.result = 'UNSTABLE'
-            break
-    }
-}
-
-def createOwaspErrorReport(Exception e) {
-    sh """
-        mkdir -p target
-        cat > target/dependency-check-report.html << 'EOF'
-<!DOCTYPE html>
-<html>
-<head>
-    <title>OWASP Dependency Check - Erreur</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
-        .error { color: #d32f2f; background: #ffebee; padding: 20px; border-radius: 4px; }
-        .timestamp { color: #666; font-size: 0.9em; }
-    </style>
-</head>
-<body>
-    <h1>🛡️ OWASP Dependency Check - TourGuide</h1>
-    <div class="error">
-        <h2>⚠️ Scan de sécurité indisponible</h2>
-        <p><strong>Erreur:</strong> ${e.getMessage()}</p>
-        <p><strong>Build:</strong> #${env.BUILD_NUMBER}</p>
-        <p><strong>Branche:</strong> ${env.BRANCH_NAME}</p>
-        <div class="timestamp">Timestamp: ${new Date()}</div>
-    </div>
-    <h3>Actions recommandées:</h3>
-    <ul>
-        <li>Vérifier la clé API NVD dans Jenkins Credentials</li>
-        <li>Vérifier la connectivité réseau vers api.nvd.nist.gov</li>
-        <li>Obtenir une clé API gratuite sur: https://nvd.nist.gov/developers/request-an-api-key</li>
-        <li>Le scan a basculé en mode local sans API NVD</li>
-    </ul>
-</body>
-</html>
-EOF
-    """
-}
-
-def archiveOwaspReports() {
-    echo "📋 Archivage des rapports OWASP..."
-
-    def reportFiles = [
-        'dependency-check-report.html',
-        'dependency-check-report.xml',
-        'dependency-check-report.json',
-        'dependency-check-report.csv'
-    ]
-
-    def reportsFound = false
-    reportFiles.each { report ->
-        if (fileExists("target/${report}")) {
-            archiveArtifacts artifacts: "target/${report}", allowEmptyArchive: true
-            echo "✅ Rapport ${report} archivé"
-            reportsFound = true
-        }
-    }
-
-    if (fileExists('target/dependency-check-report.html')) {
-        publishHTML([
-            allowMissing: false,
-            alwaysLinkToLastBuild: true,
-            keepAll: true,
-            reportDir: 'target',
-            reportFiles: 'dependency-check-report.html',
-            reportName: 'OWASP Security Report'
-        ])
-        echo "✅ Rapport OWASP HTML publié"
-    } else {
-        echo "⚠️ Aucun rapport OWASP HTML trouvé"
-    }
-
-    if (!reportsFound) {
-        echo "⚠️ Aucun rapport OWASP généré"
-    }
-}
 
 def checkDockerAvailability() {
     try {
@@ -1123,35 +906,33 @@ def checkDockerAvailability() {
             return "false"
         }
 
-        if (dockerFound) {
-            try {
-                sh "${dockerPath} --version"
-                def daemonCheck = sh(script: "${dockerPath} info >/dev/null 2>&1", returnStatus: true)
+        try {
+            sh "${dockerPath} --version"
+            def daemonCheck = sh(script: "${dockerPath} info >/dev/null 2>&1", returnStatus: true)
 
-                if (daemonCheck == 0) {
-                    echo "✅ Docker daemon actif"
+            if (daemonCheck == 0) {
+                echo "✅ Docker daemon actif"
 
-                    try {
-                        def composeCheck = sh(script: "docker-compose --version || docker compose --version", returnStatus: true)
-                        if (composeCheck == 0) {
-                            echo "✅ Docker Compose disponible"
-                            return "true"
-                        } else {
-                            echo "⚠️ Docker Compose non disponible"
-                            return "false"
-                        }
-                    } catch (Exception e) {
-                        echo "⚠️ Erreur vérification Docker Compose: ${e.getMessage()}"
+                try {
+                    def composeCheck = sh(script: "docker-compose --version || docker compose --version", returnStatus: true)
+                    if (composeCheck == 0) {
+                        echo "✅ Docker Compose disponible"
+                        return "true"
+                    } else {
+                        echo "⚠️ Docker Compose non disponible"
                         return "false"
                     }
-                } else {
-                    echo "❌ Docker daemon non actif"
+                } catch (Exception e) {
+                    echo "⚠️ Erreur vérification Docker Compose: ${e.getMessage()}"
                     return "false"
                 }
-            } catch (Exception e) {
-                echo "❌ Erreur vérification Docker: ${e.getMessage()}"
+            } else {
+                echo "❌ Docker daemon non actif"
                 return "false"
             }
+        } catch (Exception e) {
+            echo "❌ Erreur vérification Docker: ${e.getMessage()}"
+            return "false"
         }
 
     } catch (Exception e) {
@@ -1167,6 +948,7 @@ def buildDockerImageEnhanced(config) {
         def imageName = "${config.containerName}:${env.CONTAINER_TAG}"
         def latestImageName = "${config.containerName}:latest"
 
+        // Vérification du JAR
         def jarFiles = findFiles(glob: 'target/*.jar').findAll {
             it.name.endsWith('.jar') && !it.name.contains('sources') && !it.name.contains('javadoc')
         }
@@ -1178,11 +960,13 @@ def buildDockerImageEnhanced(config) {
         def jarFile = jarFiles[0].path
         echo "📦 JAR utilisé: ${jarFile}"
 
+        // Vérification/Création du Dockerfile
         if (!fileExists('Dockerfile')) {
             echo "📝 Création d'un Dockerfile par défaut..."
             createDefaultDockerfile()
         }
 
+        // Construction avec logs détaillés
         sh """
             echo "🔨 Construction de l'image Docker..."
             echo "Image: ${imageName}"
@@ -1201,6 +985,7 @@ def buildDockerImageEnhanced(config) {
                 .
         """
 
+        // Vérification de la construction
         sh """
             echo "✅ Vérification de l'image construite:"
             docker images ${imageName}
@@ -1209,6 +994,7 @@ def buildDockerImageEnhanced(config) {
             docker inspect ${imageName} --format='{{.Config.Labels}}'
         """
 
+        // Tag latest pour master
         if (env.BRANCH_NAME == 'master') {
             sh """
                 docker tag ${imageName} ${latestImageName}
@@ -1267,7 +1053,7 @@ RUN mkdir -p /opt/app/logs && \\
 USER tourguide
 
 # Port exposé
-EXPOSE 8080 8091 8092
+EXPOSE 8080 8090 8091 8092
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \\
@@ -1281,23 +1067,333 @@ EOF
 }
 
 def deployWithDockerCompose(config) {
-    echo "🐳 Déploiement avec Docker Compose (version simplifiée)..."
-    echo "⚠️ Fonctionnalité réduite pour éviter les erreurs de syntaxe"
-    echo "✅ Build Docker terminé, image disponible: ${config.containerName}:${env.CONTAINER_TAG}"
+    try {
+        echo "🐳 Déploiement avec Docker Compose..."
+        echo "🔧 Configuration déploiement:"
+        echo "  - Branche: ${env.BRANCH_NAME}"
+        echo "  - Environnement: ${env.ENV_NAME}"
+        echo "  - Port externe: ${env.HTTP_PORT}"
+        echo "  - Container tag: ${env.CONTAINER_TAG}"
+
+        // Vérification des prérequis
+        if (!fileExists('docker-compose.yml')) {
+            createDefaultDockerCompose(config)
+        }
+
+        // Créer le fichier .env
+        createEnvFile()
+
+        // Vérification et libération des ports
+        echo "🔍 Vérification des ports..."
+        sh """
+            echo "Vérification du port ${env.HTTP_PORT}:"
+            if lsof -i :${env.HTTP_PORT} >/dev/null 2>&1; then
+                echo "⚠️ Port ${env.HTTP_PORT} déjà utilisé"
+                lsof -ti:${env.HTTP_PORT} | xargs kill -9 2>/dev/null || true
+                sleep 2
+            else
+                echo "✅ Port ${env.HTTP_PORT} disponible"
+            fi
+        """
+
+        // Arrêt propre des conteneurs existants
+        echo "🛑 Arrêt des conteneurs existants..."
+        sh """
+            docker ps -a --filter "name=tourguide" --format "{{.Names}}" | xargs docker rm -f 2>/dev/null || true
+            docker-compose down --remove-orphans 2>/dev/null || true
+            docker container prune -f || true
+            sleep 5
+        """
+
+        // Vérification de l'image
+        def imageName = "${config.containerName}:${env.CONTAINER_TAG}"
+        echo "🔍 Vérification de l'image Docker: ${imageName}"
+        sh """
+            if ! docker images ${imageName} --format "table {{.Repository}}:{{.Tag}}" | grep -q "${imageName}"; then
+                echo "❌ Image ${imageName} non trouvée"
+                echo "📋 Images disponibles:"
+                docker images | grep ${config.containerName} || echo "Aucune image ${config.containerName} trouvée"
+                exit 1
+            else
+                echo "✅ Image ${imageName} trouvée"
+            fi
+        """
+
+        // Démarrage des conteneurs
+        echo "🚀 Démarrage des conteneurs..."
+        sh """
+            export HTTP_PORT=${env.HTTP_PORT}
+            export BUILD_NUMBER=${env.BUILD_NUMBER}
+            export BRANCH_NAME=${env.BRANCH_NAME}
+            export CONTAINER_TAG=${env.CONTAINER_TAG}
+            export VCS_REF=${env.BRANCH_NAME}
+            export BUILD_DATE=\$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            export SPRING_PROFILES_ACTIVE=${env.ENV_NAME}
+            export IMAGE_NAME=${imageName}
+
+            echo "📄 Variables d'environnement:"
+            echo "HTTP_PORT=\${HTTP_PORT}"
+            echo "IMAGE_NAME=\${IMAGE_NAME}"
+            echo "SPRING_PROFILES_ACTIVE=\${SPRING_PROFILES_ACTIVE}"
+
+            docker-compose up -d --force-recreate --remove-orphans
+        """
+
+        echo "✅ Conteneurs démarrés"
+
+        // Attente du démarrage
+        echo "⏳ Attente du démarrage des conteneurs (30 secondes)..."
+        sleep(30)
+
+        // Vérification de l'état
+        echo "🔍 Vérification de l'état:"
+        sh """
+            echo "=== DOCKER COMPOSE PS ==="
+            docker-compose ps
+
+            echo "=== DOCKER PS (conteneurs TourGuide) ==="
+            docker ps -a --filter "name=tourguide"
+
+            echo "=== PORTS EN ÉCOUTE ==="
+            lsof -i :${env.HTTP_PORT} || echo "Port ${env.HTTP_PORT} non en écoute"
+
+            echo "=== LOGS DU SERVICE ${config.serviceName} ==="
+            docker-compose logs --tail 50 ${config.serviceName} || true
+        """
+
+        // Vérification finale avec retry
+        def maxRetries = 3
+        def containerRunning = false
+
+        for (int i = 1; i <= maxRetries; i++) {
+            echo "🔍 Tentative ${i}/${maxRetries} de vérification du conteneur..."
+
+            def containerStatus = sh(
+                script: "docker-compose ps -q ${config.serviceName} | xargs docker inspect -f '{{.State.Status}}' 2>/dev/null || echo 'not-found'",
+                returnStdout: true
+            ).trim()
+
+            echo "📊 État du conteneur (tentative ${i}): ${containerStatus}"
+
+            if (containerStatus == "running") {
+                containerRunning = true
+                break
+            } else {
+                echo "⏳ Conteneur pas encore prêt, attente de 10 secondes..."
+                sleep(10)
+            }
+        }
+
+        if (containerRunning) {
+            echo "✅ Application déployée avec succès !"
+            echo "🌐 Application accessible sur: http://localhost:${env.HTTP_PORT}"
+            echo "🏥 Health check: http://localhost:${env.HTTP_PORT}/actuator/health"
+        } else {
+            echo "❌ Le conteneur n'est pas en cours d'exécution"
+            sh """
+                echo "=== LOGS D'ERREUR DÉTAILLÉS ==="
+                docker-compose logs ${config.serviceName} || true
+            """
+            error "❌ Échec du démarrage du conteneur"
+        }
+
+    } catch (Exception e) {
+        echo "❌ Erreur lors du déploiement:"
+        diagnosisDockerIssues()
+        error "❌ Échec du déploiement Docker Compose: ${e.getMessage()}"
+    }
+}
+
+def createDefaultDockerCompose(config) {
+    echo "📝 Création d'un docker-compose.yml par défaut..."
+    sh """
+        cat > docker-compose.yml << 'EOF'
+version: '3.8'
+
+services:
+  ${config.serviceName}:
+    image: \${IMAGE_NAME:-${config.containerName}:latest}
+    container_name: ${config.containerName}-\${BRANCH_NAME:-local}-\${BUILD_NUMBER:-dev}
+    ports:
+      - "\${HTTP_PORT:-8090}:\${HTTP_PORT:-8090}"
+    environment:
+      - JAVA_OPTS=\${JAVA_OPTS:-"-Xmx512m -Xms256m -XX:+UseContainerSupport"}
+      - SERVER_PORT=\${HTTP_PORT:-8090}
+      - SPRING_PROFILES_ACTIVE=\${SPRING_PROFILES_ACTIVE:-dev}
+      - LOG_LEVEL=\${LOG_LEVEL:-INFO}
+      - MANAGEMENT_SERVER_PORT=\${HTTP_PORT:-8090}
+    networks:
+      - tourguide-network
+    restart: unless-stopped
+    volumes:
+      - app-logs:/opt/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:\${HTTP_PORT:-8090}/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+networks:
+  tourguide-network:
+    driver: bridge
+    name: tourguide-network
+
+volumes:
+  app-logs:
+    driver: local
+EOF
+    """
+    echo "✅ docker-compose.yml par défaut créé"
+}
+
+def createEnvFile() {
+    echo "📝 Création du fichier .env pour Docker Compose..."
+
+    sh """
+        cat > .env << 'EOF'
+# Configuration environnement TourGuide - Build #${env.BUILD_NUMBER}
+BUILD_DATE=\$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+VCS_REF=${env.BRANCH_NAME}
+BUILD_NUMBER=${env.BUILD_NUMBER}
+CONTAINER_TAG=${env.CONTAINER_TAG}
+IMAGE_NAME=${config.containerName}:${env.CONTAINER_TAG}
+
+# Configuration Application Spring Boot
+SPRING_PROFILES_ACTIVE=${env.ENV_NAME}
+JAVA_OPTS=-Xmx512m -Xms256m -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0
+
+# Configuration des ports
+HTTP_PORT=${env.HTTP_PORT}
+SERVER_PORT=${env.HTTP_PORT}
+
+# Configuration Docker
+CONTAINER_NAME=${config.containerName}
+SERVICE_NAME=${config.serviceName}
+
+# Configuration réseau
+NETWORK_NAME=tourguide-network
+
+# Configuration logging
+LOG_LEVEL=INFO
+LOG_PATH=/opt/app/logs
+
+# Configuration Actuator
+MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=health,info,metrics
+MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS=always
+MANAGEMENT_SERVER_PORT=${env.HTTP_PORT}
+
+# Informations de l'application
+APP_NAME=TourGuide
+APP_VERSION=0.0.1-SNAPSHOT
+APP_ENVIRONMENT=${env.ENV_NAME}
+
+# Variables spécifiques à l'environnement
+BRANCH_NAME=${env.BRANCH_NAME}
+ENV_NAME=${env.ENV_NAME}
+EOF
+    """
+
+    echo "✅ Fichier .env créé avec la configuration pour l'environnement ${env.ENV_NAME}"
+
+    sh """
+        echo "📋 Contenu du fichier .env créé:"
+        echo "================================"
+        cat .env
+        echo "================================"
+    """
 }
 
 def performHealthCheck(config) {
-    echo "🏥 Health check de l'application (version simplifiée)..."
-    echo "✅ Validation des prérequis terminée"
+    try {
+        echo "🏥 Health check de l'application..."
+
+        timeout(time: 3, unit: 'MINUTES') {
+            waitUntil {
+                script {
+                    def status = sh(
+                        script: "docker-compose ps -q ${config.serviceName} | xargs docker inspect -f '{{.State.Status}}' 2>/dev/null || echo 'not-found'",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "État du conteneur: ${status}"
+                    return status == "running"
+                }
+            }
+        }
+
+        timeout(time: 2, unit: 'MINUTES') {
+            waitUntil {
+                script {
+                    def healthCheck = sh(
+                        script: "curl -f -s http://localhost:${env.HTTP_PORT}/actuator/health > /dev/null",
+                        returnStatus: true
+                    )
+
+                    if (healthCheck == 0) {
+                        echo "✅ Application répond correctement"
+                        return true
+                    } else {
+                        echo "⏳ Application pas encore prête..."
+                        sleep(5)
+                        return false
+                    }
+                }
+            }
+        }
+
+        echo "✅ Health check réussi"
+
+    } catch (Exception e) {
+        sh "docker-compose logs ${config.serviceName} --tail 30 || true"
+        error "❌ Health check échoué: ${e.getMessage()}"
+    }
 }
 
 def diagnosisDockerIssues() {
     echo "🔍 Diagnostic des problèmes Docker..."
+
     sh """
         echo "=== DIAGNOSTIC DOCKER COMPLET ==="
+
+        echo "1. Version Docker:"
         docker --version || echo "Docker non disponible"
-        docker ps || echo "Impossible de lister les conteneurs"
-        docker images | head -5 || echo "Impossible de lister les images"
+
+        echo "2. Version Docker Compose:"
+        docker-compose --version || docker compose --version || echo "Docker Compose non disponible"
+
+        echo "3. Espace disque:"
+        df -h
+
+        echo "4. Mémoire disponible:"
+        free -h 2>/dev/null || vm_stat || echo "Impossible d'afficher la mémoire"
+
+        echo "5. Images Docker disponibles:"
+        docker images | head -10
+
+        echo "6. Conteneurs en cours:"
+        docker ps
+
+        echo "7. Tous les conteneurs:"
+        docker ps -a | head -10
+
+        echo "8. Réseaux Docker:"
+        docker network ls
+
+        echo "9. Volumes Docker:"
+        docker volume ls
+
+        echo "10. Fichiers dans le workspace:"
+        ls -la
+
+        echo "11. Contenu du dossier target:"
+        ls -la target/ || echo "Dossier target non trouvé"
+
+        echo "12. Processus Java en cours:"
+        ps aux | grep java || echo "Aucun processus Java"
+
+        echo "13. Ports en écoute:"
+        netstat -tlnp 2>/dev/null || lsof -i | grep -E ":(809|8080)" || echo "Impossible d'afficher les ports"
     """
 }
 
@@ -1305,13 +1401,196 @@ def cleanupDockerImages(config) {
     try {
         echo "🧹 Nettoyage Docker..."
         sh """
+            # Arrêt des conteneurs avec docker-compose
+            docker-compose down --remove-orphans || true
+
+            # Nettoyage des images non utilisées (garde les récentes)
             docker image prune -f --filter "until=24h" || true
+
+            # Nettoyage des conteneurs arrêtés
             docker container prune -f || true
+
+            # Nettoyage des volumes non utilisés
+            docker volume prune -f || true
+
+            # Nettoyage des réseaux non utilisés
+            docker network prune -f || true
         """
         echo "✅ Nettoyage Docker terminé"
     } catch (Exception e) {
         echo "⚠️ Erreur nettoyage Docker: ${e.getMessage()}"
     }
+}
+
+// =============================================================================
+// FONCTIONS UTILITAIRES ET RAPPORTS
+// =============================================================================
+
+def createOwaspErrorReport(Exception e) {
+    sh """
+        mkdir -p target
+        cat > target/dependency-check-report.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OWASP Dependency Check - Erreur</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .error { color: #d32f2f; background: #ffebee; padding: 20px; border-radius: 4px; }
+        .timestamp { color: #666; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <h1>🛡️ OWASP Dependency Check - TourGuide</h1>
+    <div class="error">
+        <h2>⚠️ Scan de sécurité indisponible</h2>
+        <p><strong>Erreur:</strong> ${e.getMessage()}</p>
+        <p><strong>Build:</strong> #${env.BUILD_NUMBER}</p>
+        <p><strong>Branche:</strong> ${env.BRANCH_NAME}</p>
+        <div class="timestamp">Timestamp: ${new Date()}</div>
+    </div>
+    <h3>Actions recommandées:</h3>
+    <ul>
+        <li>Vérifier la clé API NVD dans Jenkins Credentials</li>
+        <li>Vérifier la connectivité réseau vers api.nvd.nist.gov</li>
+        <li>Obtenir une clé API gratuite sur: https://nvd.nist.gov/developers/request-an-api-key</li>
+        <li>Le scan a basculé en mode local sans API NVD</li>
+    </ul>
+</body>
+</html>
+EOF
+    """
+}
+
+def archiveOwaspReports() {
+    echo "📋 Archivage des rapports OWASP..."
+
+    def reportFiles = [
+        'dependency-check-report.html',
+        'dependency-check-report.xml',
+        'dependency-check-report.json',
+        'dependency-check-report.csv'
+    ]
+
+    def reportsFound = false
+    reportFiles.each { report ->
+        if (fileExists("target/${report}")) {
+            archiveArtifacts artifacts: "target/${report}", allowEmptyArchive: true
+            echo "✅ Rapport ${report} archivé"
+            reportsFound = true
+        }
+    }
+
+    // Publication du rapport HTML principal
+    if (fileExists('target/dependency-check-report.html')) {
+        publishHTML([
+            allowMissing: false,
+            alwaysLinkToLastBuild: true,
+            keepAll: true,
+            reportDir: 'target',
+            reportFiles: 'dependency-check-report.html',
+            reportName: 'OWASP Security Report'
+        ])
+        echo "✅ Rapport OWASP HTML publié"
+    } else {
+        echo "⚠️ Aucun rapport OWASP HTML trouvé"
+    }
+
+    if (!reportsFound) {
+        echo "⚠️ Aucun rapport OWASP généré"
+    }
+}
+
+def handleOwaspResult(exitCode) {
+    switch(exitCode) {
+        case 0:
+            echo "✅ OWASP: Aucune vulnérabilité critique détectée"
+            break
+        case 1:
+            echo "⚠️ OWASP: Vulnérabilités détectées mais sous le seuil configuré"
+            currentBuild.result = 'UNSTABLE'
+            break
+        default:
+            echo "❌ OWASP: Erreur lors de l'analyse (code: ${exitCode})"
+            currentBuild.result = 'UNSTABLE'
+            break
+    }
+}
+
+def validateEnvironment() {
+    echo "🔍 Validation de l'environnement..."
+
+    sh """
+        java -version
+        echo "JAVA_HOME: \$JAVA_HOME"
+    """
+
+    sh """
+        mvn -version
+    """
+
+    sh """
+        df -h . | tail -1 | awk '{print "💾 Espace disque: " \$4 " disponible (" \$5 " utilisé)"}'
+    """
+
+    def criticalFiles = ['pom.xml', 'src/main/java']
+    criticalFiles.each { file ->
+        if (!fileExists(file)) {
+            error "❌ Fichier/dossier critique manquant: ${file}"
+        }
+    }
+}
+
+def validateDockerPrerequisites() {
+    if (env.DOCKER_AVAILABLE != "true") {
+        error "🐳 Docker non disponible"
+    }
+
+    def jarFiles = findFiles(glob: 'target/*.jar').findAll {
+        it.name.endsWith('.jar') && !it.name.contains('sources') && !it.name.contains('javadoc')
+    }
+
+    if (jarFiles.length == 0) {
+        error "📦 Aucun JAR exécutable trouvé"
+    }
+
+    echo "📦 JAR trouvé: ${jarFiles[0].path}"
+}
+
+def displayBuildInfo(config) {
+    echo """
+    ================================================================================
+                      🚀 CONFIGURATION BUILD TOURGUIDE OPTIMISÉ
+    ================================================================================
+     Build #: ${env.BUILD_NUMBER}
+     Branch: ${env.BRANCH_NAME}
+     Environment: ${env.ENV_NAME}
+     Port externe: ${env.HTTP_PORT}
+     Java: 21
+     Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Disponible" : "⚠️ Indisponible"}
+     Tag: ${env.CONTAINER_TAG}
+     Service: ${config.serviceName}
+
+     🔧 Configuration des ports:
+     • dev (default) : 8090
+     • uat (develop) : 8091
+     • prod (master) : 8092
+
+     ⚙️ NEXUS STATUS:
+     • Activé: ${config.nexus.enabled ? "✅" : "❌"}
+     ${config.nexus.enabled ? "• URL: ${config.nexus.url}" : "• Mode: Standard Maven"}
+
+     🛡️ SECURITY:
+     • OWASP: Avec fallback automatique
+     • SonarQube: Community Edition
+     • Coverage: JaCoCo natif Jenkins
+
+     🐳 DOCKER:
+     • Compose: Dynamique
+     • Health Check: Automatique
+     • Cleanup: Auto après build
+    ================================================================================
+    """
 }
 
 def checkQualityGate(config) {
@@ -1336,8 +1615,145 @@ def checkQualityGate(config) {
 }
 
 // =============================================================================
+// FONCTIONS DE NOTIFICATION AMÉLIORÉES
+// =============================================================================
+
+def sendEnhancedNotificationWithNexus(recipients, config) {
+    try {
+        def status = currentBuild.currentResult ?: 'SUCCESS'
+        def statusIcon = ['SUCCESS': '✅', 'FAILURE': '❌', 'UNSTABLE': '⚠️', 'ABORTED': '🛑'][status] ?: '❓'
+
+        def subject = "[Jenkins] TourGuide - Build #${env.BUILD_NUMBER} - ${status} (${env.BRANCH_NAME})"
+
+        def nexusInfo = ""
+        if (status == 'SUCCESS' || status == 'UNSTABLE') {
+            nexusInfo = """
+        📦 NEXUS REPOSITORY:
+        • URL: ${config.nexus.url}
+        • Repository: ${isSnapshot() ? config.nexus.repositories.snapshots : config.nexus.repositories.releases}
+        • Artefact déployé: ${status == 'SUCCESS' ? '✅' : '⚠️'}
+        • Browse: ${config.nexus.url}/#browse/browse:${isSnapshot() ? config.nexus.repositories.snapshots : config.nexus.repositories.releases}
+        """
+        }
+
+        def deploymentInfo = ""
+        if (env.DOCKER_AVAILABLE == "true" && (status == 'SUCCESS' || status == 'UNSTABLE')) {
+            deploymentInfo = """
+        🚀 DÉPLOIEMENT RÉUSSI:
+        • Application: http://localhost:${env.HTTP_PORT}
+        • Health Check: http://localhost:${env.HTTP_PORT}/actuator/health
+        • Environnement: ${env.ENV_NAME}
+        • Container: ${config.containerName}-${env.BRANCH_NAME}-${env.BUILD_NUMBER}
+
+        📊 RAPPORTS:
+        • Coverage JaCoCo: ${env.BUILD_URL}jacoco/
+        • Security OWASP: ${env.BUILD_URL}OWASP_20Security_20Report/
+        """
+        }
+
+        def body = """
+        ${statusIcon} BUILD ${status} - TourGuide avec Nexus
+
+        📋 DÉTAILS:
+        • Build: #${env.BUILD_NUMBER}
+        • Branche: ${env.BRANCH_NAME}
+        • Environnement: ${env.ENV_NAME}
+        • Port: ${env.HTTP_PORT}
+        • Java: 21
+        • Maven: ${config.nexus.enabled ? "Config File Provider" : "Standard"}
+        • Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅" : "❌"}
+        • Durée: ${currentBuild.durationString ?: 'N/A'}
+
+        ${nexusInfo}
+        ${deploymentInfo}
+
+        🔗 LIENS:
+        • Console Jenkins: ${env.BUILD_URL}console
+        • Workspace: ${env.BUILD_URL}ws/
+        ${config.nexus.enabled ? "• Nexus Repository: ${config.nexus.url}" : ""}
+
+        📅 Build exécuté le ${new Date()}
+        🏗️ Jenkins: ${env.JENKINS_URL}
+        """
+
+        mail(to: recipients, subject: subject, body: body, mimeType: 'text/plain')
+        echo "📧 Notification avec infos Nexus envoyée à: ${recipients}"
+
+    } catch (Exception e) {
+        echo "❌ Erreur notification: ${e.getMessage()}"
+    }
+}
+
+def sendEnhancedNotification(recipients, config) {
+    try {
+        def status = currentBuild.currentResult ?: 'SUCCESS'
+        def statusIcon = ['SUCCESS': '✅', 'FAILURE': '❌', 'UNSTABLE': '⚠️', 'ABORTED': '🛑'][status] ?: '❓'
+
+        def subject = "[Jenkins] TourGuide - Build #${env.BUILD_NUMBER} - ${status} (${env.BRANCH_NAME})"
+
+        def deploymentInfo = ""
+        if (env.DOCKER_AVAILABLE == "true" && (status == 'SUCCESS' || status == 'UNSTABLE')) {
+            deploymentInfo = """
+        🚀 DÉPLOIEMENT RÉUSSI:
+        • Application: http://localhost:${env.HTTP_PORT}
+        • Health Check: http://localhost:${env.HTTP_PORT}/actuator/health
+        • Environnement: ${env.ENV_NAME}
+        • Container: ${config.containerName}-${env.BRANCH_NAME}-${env.BUILD_NUMBER}
+
+        📊 RAPPORTS:
+        • Coverage JaCoCo: ${env.BUILD_URL}jacoco/
+        • Coverage Report: ${env.BUILD_URL}JaCoCo_20Coverage_20Report/
+        • Security OWASP: ${env.BUILD_URL}OWASP_20Security_20Report/
+        """
+        }
+
+        def body = """
+        ${statusIcon} BUILD ${status} - TourGuide
+
+        📋 DÉTAILS:
+        • Build: #${env.BUILD_NUMBER}
+        • Branche: ${env.BRANCH_NAME}
+        • Environnement: ${env.ENV_NAME}
+        • Port: ${env.HTTP_PORT}
+        • Java: 21
+        • Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅" : "❌"}
+        • OWASP: Avec fallback automatique
+        • Durée: ${currentBuild.durationString ?: 'N/A'}
+
+        ${deploymentInfo}
+
+        🔗 LIENS:
+        • Console Jenkins: ${env.BUILD_URL}console
+        • Workspace: ${env.BUILD_URL}ws/
+
+        📅 Build exécuté le ${new Date()}
+        🏗️ Jenkins: ${env.JENKINS_URL}
+        """
+
+        mail(to: recipients, subject: subject, body: body, mimeType: 'text/plain')
+        echo "📧 Notification envoyée à: ${recipients}"
+
+    } catch (Exception e) {
+        echo "❌ Erreur notification: ${e.getMessage()}"
+    }
+}
+
+// =============================================================================
 // FONCTIONS UTILITAIRES POUR LA CONFIGURATION
 // =============================================================================
+
+def isSnapshot() {
+    try {
+        def version = sh(
+            script: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout 2>/dev/null || echo 'unknown'",
+            returnStdout: true
+        ).trim()
+        return version.contains('SNAPSHOT')
+    } catch (Exception e) {
+        echo "⚠️ Impossible de déterminer si c'est un SNAPSHOT: ${e.getMessage()}"
+        return true
+    }
+}
 
 String getEnvName(String branchName, Map environments) {
     def branch = branchName?.toLowerCase()
