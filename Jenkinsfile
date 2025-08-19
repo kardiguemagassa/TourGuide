@@ -652,7 +652,7 @@ def verifyNexusDeployment(config) {
                 try {
                     // Méthode 3: step() - la plus compatible
                     step([
-                        $class: 'JUnitResultArchiver',
+                        '$class': 'JUnitResultArchiver',
                         testResults: workingPattern,
                         allowEmptyResults: false
                     ])
