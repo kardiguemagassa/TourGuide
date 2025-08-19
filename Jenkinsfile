@@ -7,15 +7,15 @@ def config = [
     sonarProjectKey: "tourguide",
     // Configuration Nexus
     nexus: [
-        enabled: true, // ✅ ACTIVÉ pour utiliser Nexus configuré dans Jenkins
+        enabled: true, // activer pour utiliser Nexus configuré dans Jenkins
         configFileId: "maven-settings-nexus", // ID du Config File Provider dans Jenkins
         url: "http://localhost:8081",
         credentialsId: "nexus-credentials"
     ],
     // Configuration SonarQube (utilise la config Jenkins)
     sonar: [
-        enabled: true, // ✅ ACTIVÉ - utilise la configuration Jenkins
-        installationName: "SonarQube", // Nom de l'installation dans Jenkins
+        enabled: true,
+        installationName: "SonarQube",
         projectKey: "tourguide",
         projectName: "TourGuide Application"
     ],
@@ -23,7 +23,7 @@ def config = [
         qualityGate: 2,
         deployment: 5,
         sonarAnalysis: 10,
-        owaspCheck: 20
+        owaspCheck: 20 // Augmenté pour OWASP
     ],
     ports: [
         master: '8092',
@@ -367,7 +367,7 @@ def waitForSonarQubeQualityGate(config) {
 }
 
 // =============================================================================
-// FONCTIONS EXISTANTES (GARDÉES INTACTES)
+// FONCTIONS buildWithNexusJava21
 // =============================================================================
 
 def buildWithNexusJava21(config) {
@@ -747,7 +747,7 @@ def deployToNexusRepository(config) {
 }
 
 // =============================================================================
-// AUTRES FONCTIONS UTILITAIRES (gardez toutes vos fonctions existantes)
+// AUTRES FONCTIONS UTILITAIRES
 // =============================================================================
 
 def runOwaspDependencyCheckSimple(config) {
