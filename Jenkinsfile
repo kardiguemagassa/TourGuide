@@ -67,7 +67,6 @@ pipeline {
         jdk 'JDK-21'
     }
 
-
     environment {
         DOCKER_BUILDKIT = "1"
         COMPOSE_DOCKER_CLI_BUILD = "1"
@@ -94,6 +93,24 @@ pipeline {
                     if (config.nexus.enabled) {
                         validateNexusConfiguration(config)
                     }
+                }
+            }
+        }
+
+        stage('Clean Corrupted Dependencies') {
+            steps {
+                script {
+                    echo "🧹 Nettoyage des dépendances corrompues..."
+                    sh """
+                        echo "🔍 Vérification des JARs potentiellement corrompus..."
+
+                        # Supprimer les dépendances problématiques
+                        rm -rf \${WORKSPACE}/.m2/repository/net/bytebuddy/ || true
+                        rm -rf \${WORKSPACE}/.m2/repository/org/jacoco/ || true
+                        rm -rf \${WORKSPACE}/.m2/repository/org/mockito/ || true
+
+                        echo "✅ Nettoyage terminé - les JARs seront re-téléchargés depuis Nexus"
+                    """
                 }
             }
         }
