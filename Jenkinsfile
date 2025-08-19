@@ -5,10 +5,10 @@ def config = [
     serviceName: "tourguide",
     dockerRegistry: "docker.io",
     sonarProjectKey: "tourguide",
-    // Configuration Nexus (optionnelle)
+    // Configuration Nexus
     nexus: [
-        enabled: false, // Mettre à true pour activer Nexus
-        configFileId: "maven-settings-nexus",
+        enabled: true, // ✅ ACTIVÉ pour utiliser Nexus configuré dans Jenkins
+        configFileId: "maven-settings-nexus", // ID du Config File Provider dans Jenkins
         url: "http://localhost:8081",
         credentialsId: "nexus-credentials"
     ],
@@ -16,7 +16,7 @@ def config = [
         qualityGate: 2,
         deployment: 5,
         sonarAnalysis: 10,
-        owaspCheck: 25
+        owaspCheck: 20
     ],
     ports: [
         master: '8092',
@@ -65,6 +65,12 @@ pipeline {
                     checkout scm
                     validateEnvironment()
                     env.DOCKER_AVAILABLE = checkDockerAvailability()
+
+                    // Validation Nexus si activé
+                    if (config.nexus.enabled) {
+                        validateNexusConfiguration(config)
+                    }
+
                     displayBuildInfo(config)
                 }
             }
@@ -74,16 +80,26 @@ pipeline {
             steps {
                 script {
                     echo "📦 Installation des dépendances locales..."
-                    installLocalJars()
+
+                    if (config.nexus.enabled) {
+                        installLocalJarsWithNexus(config)
+                    } else {
+                        installLocalJars()
+                    }
                 }
             }
         }
 
-        stage('Build & Test - Fixed') {
+        stage('Build & Test - Java 21 Fixed') {
             steps {
                 script {
-                    echo "🏗️ Build et tests Maven corrigés..."
-                    buildWithCleanTests()
+                    echo "🏗️ Build et tests Maven pour Java 21..."
+
+                    if (config.nexus.enabled) {
+                        buildWithNexusJava21(config)
+                    } else {
+                        buildWithCleanTestsJava21()
+                    }
                 }
             }
             post {
@@ -125,7 +141,7 @@ pipeline {
                     }
                     steps {
                         script {
-                            runOwaspDependencyCheckSimple()
+                            runOwaspDependencyCheckSimple(config)
                         }
                     }
                     post {
@@ -140,7 +156,7 @@ pipeline {
                 stage('Maven Security Audit') {
                     steps {
                         script {
-                            runMavenSecurityAudit()
+                            runMavenSecurityAudit(config)
                         }
                     }
                 }
@@ -163,7 +179,7 @@ pipeline {
             steps {
                 script {
                     validateDockerPrerequisites()
-                    buildDockerImageEnhanced(config)
+                    buildDockerImageJava21Fixed(config)
                 }
             }
         }
@@ -183,7 +199,7 @@ pipeline {
             }
             steps {
                 script {
-                    deployWithDockerComposeFixed(config)
+                    deployWithDockerComposeJava21Fixed(config)
                 }
             }
         }
@@ -229,40 +245,80 @@ pipeline {
 }
 
 // =============================================================================
-// FONCTIONS CORRIGÉES POUR RÉSOUDRE LES PROBLÈMES DE TESTS
+// FONCTIONS CORRIGÉES POUR JAVA 21
 // =============================================================================
 
-def buildWithCleanTests() {
+def buildWithNexusJava21(config) {
+    echo "🏗️ Build avec Nexus et Java 21..."
+    configFileProvider([
+        configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
+    ]) {
+        sh """
+            echo "🧹 Nettoyage avec Nexus..."
+            mvn clean -s \$MAVEN_SETTINGS \\
+                -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
+                -B -q
+
+            echo "🏗️ Compilation avec Nexus..."
+            mvn compile -s \$MAVEN_SETTINGS \\
+                -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
+                -B -q
+
+            echo "🧪 Tests avec configuration Java 21..."
+            mvn test -s \$MAVEN_SETTINGS \\
+                -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
+                -Dmaven.test.failure.ignore=true \\
+                -Dsurefire.useSystemClassLoader=false \\
+                -Dsurefire.forkCount=1 \\
+                -Dsurefire.reuseForks=false \\
+                -DskipITs=true \\
+                -B -q || echo "⚠️ Tests terminés"
+
+            echo "📦 Package avec Nexus..."
+            mvn package -s \$MAVEN_SETTINGS \\
+                -DskipTests=true \\
+                -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
+                -B -q
+
+            echo "✅ Build Nexus terminé"
+        """
+    }
+
+    // Vérification des artefacts
+    sh """
+        if [ -f target/*.jar ]; then
+            echo "📦 JAR créé avec Nexus:"
+            ls -la target/*.jar
+        else
+            echo "❌ Aucun JAR trouvé"
+            exit 1
+        fi
+    """
+}
+
+def buildWithCleanTestsJava21() {
     sh """
         echo "🧹 Nettoyage complet avant build..."
-
-        # Nettoyage du workspace
         mvn clean -Dmaven.repo.local=\${WORKSPACE}/.m2/repository -B -q
-
-        # Supprimer les caches problématiques
-        rm -rf \${WORKSPACE}/.m2/repository/org/jacoco/ || true
-        rm -rf \${WORKSPACE}/.m2/repository/net/bytebuddy/ || true
-        rm -rf \${WORKSPACE}/.m2/repository/org/mockito/ || true
 
         echo "🏗️ Compilation..."
         mvn compile -Dmaven.repo.local=\${WORKSPACE}/.m2/repository -B -q
 
-        echo "🧪 Tests avec configuration simplifiée..."
+        echo "🧪 Tests avec configuration Java 21..."
         mvn test -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
             -Dmaven.test.failure.ignore=true \\
             -Dsurefire.useSystemClassLoader=false \\
             -Dsurefire.forkCount=1 \\
             -Dsurefire.reuseForks=false \\
             -DskipITs=true \\
-            -Djacoco.skip=false \\
             -B -q || echo "⚠️ Tests terminés"
 
         echo "📦 Package..."
-        mvn package -DskipTests=true -Dmaven.repo.local=\${WORKSPACE}/.m2/repository -B -q
+        mvn package -DskipTests=true \\
+            -Dmaven.repo.local=\${WORKSPACE}/.m2/repository -B -q
 
         echo "✅ Build terminé"
 
-        # Vérification des artefacts
         if [ -f target/*.jar ]; then
             echo "📦 JAR créé:"
             ls -la target/*.jar
@@ -271,6 +327,33 @@ def buildWithCleanTests() {
             exit 1
         fi
     """
+}
+
+def installLocalJarsWithNexus(config) {
+    echo "📦 Installation des JARs locaux avec Nexus..."
+    configFileProvider([
+        configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
+    ]) {
+        sh """
+            echo "📦 Installation des JARs locaux avec settings Nexus..."
+
+            for jar in gpsUtil TripPricer rewardCentral; do
+                if [ -f "libs/\${jar}.jar" ]; then
+                    mvn install:install-file -s \$MAVEN_SETTINGS \\
+                        -Dfile=libs/\${jar}.jar \\
+                        -DgroupId=\${jar} \\
+                        -DartifactId=\${jar} \\
+                        -Dversion=1.0.0 \\
+                        -Dpackaging=jar \\
+                        -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
+                        -B -q
+                    echo "✅ \${jar}.jar installé avec Nexus"
+                else
+                    echo "⚠️ \${jar}.jar non trouvé"
+                fi
+            done
+        """
+    }
 }
 
 def installLocalJars() {
@@ -295,11 +378,351 @@ def installLocalJars() {
     """
 }
 
+// =============================================================================
+// FONCTIONS DOCKER CORRIGÉES POUR JAVA 21
+// =============================================================================
+
+def buildDockerImageJava21Fixed(config) {
+    try {
+        echo "🐳 Construction image Docker Java 21..."
+
+        def imageName = "${config.containerName}:${env.CONTAINER_TAG}"
+        def jarFiles = findFiles(glob: 'target/*.jar').findAll {
+            it.name.endsWith('.jar') && !it.name.contains('sources') && !it.name.contains('javadoc')
+        }
+
+        def jarFile = jarFiles[0].path
+        echo "📦 JAR utilisé: ${jarFile}"
+
+        if (!fileExists('Dockerfile')) {
+            createDockerfileJava21()
+        }
+
+        sh """
+            docker build \\
+                --build-arg JAR_FILE=${jarFile} \\
+                --build-arg JAVA_OPTS="-Xmx512m -Xms256m" \\
+                --build-arg BUILD_NUMBER=${env.BUILD_NUMBER} \\
+                --build-arg VCS_REF=${env.BRANCH_NAME} \\
+                --label "build.number=${env.BUILD_NUMBER}" \\
+                --label "vcs.ref=${env.BRANCH_NAME}" \\
+                --progress=plain \\
+                -t ${imageName} .
+        """
+
+        sh "docker images ${imageName}"
+        echo "✅ Image Docker Java 21 construite: ${imageName}"
+
+    } catch (Exception e) {
+        error "❌ Échec construction Docker: ${e.getMessage()}"
+    }
+}
+
+def createDockerfileJava21() {
+    sh """
+        cat > Dockerfile << 'EOF'
+FROM eclipse-temurin:21-jre-alpine
+
+# Installation des outils
+RUN apk --no-cache add curl bash && \\
+    rm -rf /var/cache/apk/*
+
+# Utilisateur non-root
+RUN addgroup -g 1000 -S spring && \\
+    adduser -u 1000 -S spring -G spring
+
+WORKDIR /opt/app
+RUN mkdir -p logs config data && \\
+    chown -R spring:spring /opt/app
+
+# Copie du JAR
+ARG JAR_FILE=target/*.jar
+COPY --chown=spring:spring \${JAR_FILE} app.jar
+
+# Script d'entrée amélioré pour Java 21
+COPY --chown=spring:spring entrypoint.sh* ./
+RUN if [ -f entrypoint.sh ]; then chmod +x entrypoint.sh; fi
+
+USER spring
+EXPOSE 8080 8090 8091 8092
+
+# Variables d'environnement Java 21
+ENV JAVA_OPTS=""
+ENV SERVER_PORT=8090
+ENV SPRING_PROFILES_ACTIVE=dev
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \\
+    CMD curl -f http://localhost:\${SERVER_PORT}/actuator/health || exit 1
+
+# Point d'entrée compatible Java 21
+ENTRYPOINT ["sh", "-c", "java \$JAVA_OPTS -jar app.jar"]
+EOF
+    """
+    echo "✅ Dockerfile Java 21 créé"
+}
+
+def deployWithDockerComposeJava21Fixed(appConfig) {
+    try {
+        echo "🐳 Déploiement Docker Compose Java 21..."
+
+        if (!fileExists('docker-compose.yml')) {
+            createDockerComposeJava21(appConfig)
+        }
+
+        createEnvFileJava21(appConfig)
+
+        sh """
+            # Nettoyage
+            docker ps -a --filter "name=tourguide" --format "{{.Names}}" | xargs docker rm -f 2>/dev/null || true
+            docker-compose down --remove-orphans 2>/dev/null || true
+            sleep 2
+
+            # Variables d'environnement Java 21
+            export HTTP_PORT=${env.HTTP_PORT}
+            export IMAGE_NAME=${appConfig.containerName}:${env.CONTAINER_TAG}
+            export SPRING_PROFILES_ACTIVE=${env.ENV_NAME}
+            export JAVA_OPTS="-Xmx512m -Xms256m"
+
+            echo "📋 Configuration Docker Compose:"
+            echo "HTTP_PORT=\$HTTP_PORT"
+            echo "IMAGE_NAME=\$IMAGE_NAME"
+            echo "SPRING_PROFILES_ACTIVE=\$SPRING_PROFILES_ACTIVE"
+            echo "JAVA_OPTS=\$JAVA_OPTS"
+
+            # Démarrage
+            docker-compose up -d --force-recreate
+        """
+
+        sleep(30)
+
+        sh """
+            echo "=== STATUS ==="
+            docker-compose ps
+            echo "=== LOGS ==="
+            docker-compose logs --tail 30 ${appConfig.serviceName}
+        """
+
+        echo "✅ Application déployée sur: http://localhost:${env.HTTP_PORT}"
+
+    } catch (Exception e) {
+        error "❌ Échec déploiement: ${e.getMessage()}"
+    }
+}
+
+def createDockerComposeJava21(appConfig) {
+    sh """
+        cat > docker-compose.yml << 'EOF'
+version: '3.8'
+services:
+  ${appConfig.serviceName}:
+    image: \${IMAGE_NAME:-${appConfig.containerName}:latest}
+    container_name: ${appConfig.containerName}-\${BUILD_NUMBER:-dev}
+    ports:
+      - "\${HTTP_PORT:-8090}:\${HTTP_PORT:-8090}"
+    environment:
+      - SERVER_PORT=\${HTTP_PORT:-8090}
+      - SPRING_PROFILES_ACTIVE=\${SPRING_PROFILES_ACTIVE:-dev}
+      - JAVA_OPTS=\${JAVA_OPTS:--Xmx512m -Xms256m}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:\${HTTP_PORT:-8090}/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - tourguide-network
+
+networks:
+  tourguide-network:
+    driver: bridge
+EOF
+    """
+    echo "✅ Docker Compose Java 21 créé"
+}
+
+def createEnvFileJava21(appConfig) {
+    sh """
+        cat > .env << 'EOF'
+# Configuration Java 21 - Build #${env.BUILD_NUMBER}
+HTTP_PORT=${env.HTTP_PORT}
+IMAGE_NAME=${appConfig.containerName}:${env.CONTAINER_TAG}
+SPRING_PROFILES_ACTIVE=${env.ENV_NAME}
+BUILD_NUMBER=${env.BUILD_NUMBER}
+JAVA_OPTS=-Xmx512m -Xms256m
+EOF
+    """
+    echo "✅ Fichier .env Java 21 créé"
+}
+
+// =============================================================================
+// FONCTIONS NEXUS
+// =============================================================================
+
+def validateNexusConfiguration(config) {
+    echo "🔍 Validation de la configuration Nexus..."
+    try {
+        configFileProvider([
+            configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
+        ]) {
+            sh '''
+                echo "📋 Contenu du settings.xml Nexus:"
+                if [ -f "$MAVEN_SETTINGS" ]; then
+                    echo "✅ Fichier settings.xml trouvé: $MAVEN_SETTINGS"
+                    if grep -q "nexus" "$MAVEN_SETTINGS"; then
+                        echo "✅ Configuration Nexus trouvée dans settings.xml"
+                        echo "📋 Repositories configurés:"
+                        grep -A5 -B1 "repository>" "$MAVEN_SETTINGS" || true
+                    else
+                        echo "❌ Configuration Nexus manquante dans settings.xml"
+                        exit 1
+                    fi
+                else
+                    echo "❌ Fichier settings.xml non trouvé: $MAVEN_SETTINGS"
+                    exit 1
+                fi
+            '''
+        }
+
+        def nexusStatus = sh(
+            script: "curl -s -o /dev/null -w '%{http_code}' ${config.nexus.url} || echo '000'",
+            returnStdout: true
+        ).trim()
+
+        if (nexusStatus == "200") {
+            echo "✅ Nexus accessible sur ${config.nexus.url}"
+        } else {
+            echo "⚠️ Nexus non accessible (HTTP: ${nexusStatus}) - continuant en mode dégradé"
+        }
+    } catch (Exception e) {
+        echo "❌ Erreur de configuration Nexus: ${e.getMessage()}"
+        echo "⚠️ Continuant sans Nexus"
+    }
+}
+
+def deployToNexusRepository(config) {
+    if (!config.nexus.enabled) {
+        echo "ℹ️ Nexus désactivé - déploiement ignoré"
+        return
+    }
+
+    echo "📤 Déploiement vers Nexus Repository..."
+    try {
+        configFileProvider([
+            configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
+        ]) {
+            sh """
+                echo "📤 Déploiement vers Nexus avec settings: \$MAVEN_SETTINGS"
+                mvn deploy -s \$MAVEN_SETTINGS \\
+                    -DskipTests=true \\
+                    -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
+                    -DretryFailedDeploymentCount=3 \\
+                    -B -q
+            """
+        }
+        echo "✅ Artefact déployé avec succès vers Nexus"
+    } catch (Exception e) {
+        echo "❌ Erreur lors du déploiement vers Nexus: ${e.getMessage()}"
+        currentBuild.result = 'UNSTABLE'
+    }
+}
+
+// =============================================================================
+// FONCTIONS UTILITAIRES ET AUTRES (INCHANGÉES)
+// =============================================================================
+
+def runOwaspDependencyCheckSimple(config) {
+    try {
+        echo "🛡️ OWASP Dependency Check simplifié..."
+
+        def settingsOption = ""
+        if (config.nexus.enabled) {
+            configFileProvider([
+                configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
+            ]) {
+                settingsOption = "-s \$MAVEN_SETTINGS"
+                runOwaspWithSettings(settingsOption)
+            }
+        } else {
+            runOwaspWithSettings("")
+        }
+
+    } catch (Exception e) {
+        echo "🚨 Erreur OWASP: ${e.getMessage()}"
+        createOwaspErrorReport(e)
+        currentBuild.result = 'UNSTABLE'
+    }
+}
+
+def runOwaspWithSettings(String settingsOption) {
+    sh "rm -rf \${WORKSPACE}/owasp-data || true"
+    sh "mkdir -p \${WORKSPACE}/owasp-data"
+
+    timeout(time: 20, unit: 'MINUTES') {
+        def exitCode = sh(script: """
+            mvn org.owasp:dependency-check-maven:check ${settingsOption} \\
+                -DdataDirectory=\${WORKSPACE}/owasp-data \\
+                -DautoUpdate=false \\
+                -DfailBuildOnCVSS=0 \\
+                -DsuppressFailureOnError=true \\
+                -DfailOnError=false \\
+                -Dformat=HTML,XML \\
+                -DprettyPrint=true \\
+                -DretireJsAnalyzerEnabled=false \\
+                -DnodeAnalyzerEnabled=false \\
+                -DossindexAnalyzerEnabled=false \\
+                -DnvdDatafeedEnabled=false \\
+                -DskipSystemScope=true \\
+                -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
+                -B -q
+        """, returnStatus: true)
+
+        if (exitCode == 0) {
+            echo "✅ OWASP: Analyse terminée avec succès"
+        } else {
+            echo "⚠️ OWASP: Analyse avec avertissements (code: ${exitCode})"
+            currentBuild.result = 'UNSTABLE'
+        }
+    }
+}
+
+def runMavenSecurityAudit(config) {
+    try {
+        echo "🔍 Audit Maven des dépendances..."
+
+        def settingsOption = ""
+        if (config.nexus.enabled) {
+            configFileProvider([
+                configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
+            ]) {
+                settingsOption = "-s \$MAVEN_SETTINGS"
+                runAuditWithSettings(settingsOption)
+            }
+        } else {
+            runAuditWithSettings("")
+        }
+
+    } catch (Exception e) {
+        echo "⚠️ Audit Maven: ${e.getMessage()}"
+    }
+}
+
+def runAuditWithSettings(String settingsOption) {
+    timeout(time: 3, unit: 'MINUTES') {
+        sh """
+            mvn versions:display-dependency-updates ${settingsOption} \\
+                -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
+                -B -q
+        """
+    }
+    echo "✅ Audit Maven terminé"
+}
+
 def publishTestAndCoverageResultsFixed() {
     echo "📊 Publication des résultats de tests et couverture..."
 
     try {
-        // 1. Publication des tests JUnit avec gestion d'erreur robuste
         def testReportPaths = [
             'target/surefire-reports/TEST-*.xml',
             'target/surefire-reports/*.xml'
@@ -330,8 +753,6 @@ def publishTestAndCoverageResultsFixed() {
                             echo "✅ Tests publiés avec junit() - Pattern: ${pattern}"
                         } catch (Exception junitError) {
                             echo "⚠️ junit() échoué: ${junitError.getMessage()}"
-
-                            // Fallback: archiver les fichiers
                             archiveArtifacts(
                                 artifacts: pattern,
                                 allowEmptyArchive: true,
@@ -348,19 +769,8 @@ def publishTestAndCoverageResultsFixed() {
 
         if (!testFilesFound) {
             echo "⚠️ Aucun fichier de test XML trouvé"
-
-            // Diagnostic
-            sh """
-                echo "=== DIAGNOSTIC TESTS ==="
-                echo "Contenu target/surefire-reports:"
-                ls -la target/surefire-reports/ || echo "Répertoire n'existe pas"
-
-                echo "Recherche fichiers .xml:"
-                find . -name "*.xml" -path "*/target/*" || echo "Aucun XML trouvé"
-            """
         }
 
-        // 2. Publication JaCoCo améliorée
         publishJacocoReportsFixed()
 
     } catch (Exception globalError) {
@@ -372,7 +782,6 @@ def publishJacocoReportsFixed() {
     echo "📊 Publication JaCoCo..."
 
     try {
-        // Vérifier et publier le rapport HTML
         if (fileExists('target/site/jacoco/index.html')) {
             try {
                 publishHTML([
@@ -391,7 +800,6 @@ def publishJacocoReportsFixed() {
             echo "⚠️ Pas de rapport HTML JaCoCo"
         }
 
-        // Publier les métriques JaCoCo
         if (fileExists('target/jacoco.exec')) {
             try {
                 jacoco(
@@ -414,75 +822,8 @@ def publishJacocoReportsFixed() {
             echo "⚠️ Pas de fichier jacoco.exec"
         }
 
-        // Archiver les artefacts JaCoCo
-        try {
-            def jacocoArtifacts = []
-            if (fileExists('target/jacoco.exec')) {
-                jacocoArtifacts.add('target/jacoco.exec')
-            }
-            if (fileExists('target/site/jacoco/')) {
-                jacocoArtifacts.add('target/site/jacoco/**/*')
-            }
-
-            if (jacocoArtifacts.size() > 0) {
-                archiveArtifacts(
-                    artifacts: jacocoArtifacts.join(','),
-                    allowEmptyArchive: true,
-                    fingerprint: false
-                )
-                echo "✅ Artefacts JaCoCo archivés"
-            }
-        } catch (Exception archiveError) {
-            echo "⚠️ Erreur archivage JaCoCo: ${archiveError.getMessage()}"
-        }
-
     } catch (Exception jacocoGlobalError) {
         echo "❌ Erreur globale JaCoCo: ${jacocoGlobalError.getMessage()}"
-    }
-}
-
-// =============================================================================
-// FONCTIONS OWASP SIMPLIFIÉES
-// =============================================================================
-
-def runOwaspDependencyCheckSimple() {
-    try {
-        echo "🛡️ OWASP Dependency Check simplifié..."
-
-        sh "rm -rf \${WORKSPACE}/owasp-data || true"
-        sh "mkdir -p \${WORKSPACE}/owasp-data"
-
-        timeout(time: 20, unit: 'MINUTES') {
-            def exitCode = sh(script: """
-                mvn org.owasp:dependency-check-maven:check \\
-                    -DdataDirectory=\${WORKSPACE}/owasp-data \\
-                    -DautoUpdate=false \\
-                    -DfailBuildOnCVSS=0 \\
-                    -DsuppressFailureOnError=true \\
-                    -DfailOnError=false \\
-                    -Dformat=HTML,XML \\
-                    -DprettyPrint=true \\
-                    -DretireJsAnalyzerEnabled=false \\
-                    -DnodeAnalyzerEnabled=false \\
-                    -DossindexAnalyzerEnabled=false \\
-                    -DnvdDatafeedEnabled=false \\
-                    -DskipSystemScope=true \\
-                    -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
-                    -B -q
-            """, returnStatus: true)
-
-            if (exitCode == 0) {
-                echo "✅ OWASP: Analyse terminée avec succès"
-            } else {
-                echo "⚠️ OWASP: Analyse avec avertissements (code: ${exitCode})"
-                currentBuild.result = 'UNSTABLE'
-            }
-        }
-
-    } catch (Exception e) {
-        echo "🚨 Erreur OWASP: ${e.getMessage()}"
-        createOwaspErrorReport(e)
-        currentBuild.result = 'UNSTABLE'
     }
 }
 
@@ -529,56 +870,6 @@ def archiveOwaspReports() {
 
     } catch (Exception e) {
         echo "❌ Erreur archivage OWASP: ${e.getMessage()}"
-    }
-}
-
-// =============================================================================
-// FONCTIONS NEXUS (CONDITIONNELLES)
-// =============================================================================
-
-def deployToNexusRepository(config) {
-    if (!config.nexus.enabled) {
-        echo "ℹ️ Nexus désactivé - déploiement ignoré"
-        return
-    }
-
-    echo "📤 Déploiement vers Nexus Repository..."
-    try {
-        configFileProvider([
-            configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
-        ]) {
-            sh """
-                mvn deploy -s \$MAVEN_SETTINGS \\
-                    -DskipTests=true \\
-                    -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
-                    -DretryFailedDeploymentCount=3 \\
-                    -B -q
-            """
-        }
-        echo "✅ Artefact déployé avec succès vers Nexus"
-    } catch (Exception e) {
-        echo "❌ Erreur lors du déploiement vers Nexus: ${e.getMessage()}"
-        currentBuild.result = 'UNSTABLE'
-    }
-}
-
-// =============================================================================
-// FONCTIONS UTILITAIRES (INCHANGÉES)
-// =============================================================================
-
-def runMavenSecurityAudit() {
-    try {
-        echo "🔍 Audit Maven des dépendances..."
-        timeout(time: 3, unit: 'MINUTES') {
-            sh """
-                mvn versions:display-dependency-updates \\
-                    -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
-                    -B -q
-            """
-        }
-        echo "✅ Audit Maven terminé"
-    } catch (Exception e) {
-        echo "⚠️ Audit Maven: ${e.getMessage()}"
     }
 }
 
@@ -689,146 +980,6 @@ def validateDockerPrerequisites() {
     echo "📦 JAR trouvé: ${jarFiles[0].path}"
 }
 
-def buildDockerImageEnhanced(config) {
-    try {
-        echo "🐳 Construction de l'image Docker..."
-
-        def imageName = "${config.containerName}:${env.CONTAINER_TAG}"
-        def jarFiles = findFiles(glob: 'target/*.jar').findAll {
-            it.name.endsWith('.jar') && !it.name.contains('sources') && !it.name.contains('javadoc')
-        }
-
-        def jarFile = jarFiles[0].path
-        echo "📦 JAR utilisé: ${jarFile}"
-
-        if (!fileExists('Dockerfile')) {
-            createDefaultDockerfile()
-        }
-
-        sh """
-            docker build \\
-                --build-arg JAR_FILE=${jarFile} \\
-                --build-arg JAVA_OPTS="-Xmx512m -Xms256m" \\
-                --build-arg BUILD_NUMBER=${env.BUILD_NUMBER} \\
-                --build-arg VCS_REF=${env.BRANCH_NAME} \\
-                --label "build.number=${env.BUILD_NUMBER}" \\
-                --label "vcs.ref=${env.BRANCH_NAME}" \\
-                --progress=plain \\
-                -t ${imageName} .
-        """
-
-        sh "docker images ${imageName}"
-        echo "✅ Image Docker construite: ${imageName}"
-
-    } catch (Exception e) {
-        error "❌ Échec construction Docker: ${e.getMessage()}"
-    }
-}
-
-def createDefaultDockerfile() {
-    sh """
-        cat > Dockerfile << 'EOF'
-FROM eclipse-temurin:21-jre-alpine
-
-RUN apk --no-cache add curl bash
-RUN addgroup -g 1000 -S spring && adduser -u 1000 -S spring -G spring
-
-WORKDIR /opt/app
-RUN mkdir -p logs && chown -R spring:spring /opt/app
-
-ARG JAR_FILE=target/*.jar
-COPY --chown=spring:spring \${JAR_FILE} app.jar
-
-USER spring
-EXPOSE 8080 8090 8091 8092
-
-ENV JAVA_OPTS=""
-ENV SERVER_PORT=8090
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \\
-    CMD curl -f http://localhost:\${SERVER_PORT}/actuator/health || exit 1
-
-ENTRYPOINT ["sh", "-c", "java \$JAVA_OPTS -jar app.jar"]
-EOF
-    """
-}
-
-def deployWithDockerComposeFixed(appConfig) {
-    try {
-        echo "🐳 Déploiement avec Docker Compose..."
-
-        if (!fileExists('docker-compose.yml')) {
-            createDefaultDockerCompose(appConfig)
-        }
-
-        createEnvFile(appConfig)
-
-        sh """
-            # Nettoyage
-            docker ps -a --filter "name=tourguide" --format "{{.Names}}" | xargs docker rm -f 2>/dev/null || true
-            docker-compose down --remove-orphans 2>/dev/null || true
-            sleep 2
-
-            # Variables d'environnement
-            export HTTP_PORT=${env.HTTP_PORT}
-            export IMAGE_NAME=${appConfig.containerName}:${env.CONTAINER_TAG}
-            export SPRING_PROFILES_ACTIVE=${env.ENV_NAME}
-
-            # Démarrage
-            docker-compose up -d --force-recreate
-        """
-
-        sleep(30)
-
-        sh """
-            echo "=== STATUS ==="
-            docker-compose ps
-            docker-compose logs --tail 20 ${appConfig.serviceName}
-        """
-
-        echo "✅ Application déployée sur: http://localhost:${env.HTTP_PORT}"
-
-    } catch (Exception e) {
-        error "❌ Échec déploiement: ${e.getMessage()}"
-    }
-}
-
-def createDefaultDockerCompose(appConfig) {
-    sh """
-        cat > docker-compose.yml << 'EOF'
-version: '3.8'
-services:
-  ${appConfig.serviceName}:
-    image: \${IMAGE_NAME:-${appConfig.containerName}:latest}
-    container_name: ${appConfig.containerName}-\${BUILD_NUMBER:-dev}
-    ports:
-      - "\${HTTP_PORT:-8090}:\${HTTP_PORT:-8090}"
-    environment:
-      - SERVER_PORT=\${HTTP_PORT:-8090}
-      - SPRING_PROFILES_ACTIVE=\${SPRING_PROFILES_ACTIVE:-dev}
-      - JAVA_OPTS=-Xmx512m -Xms256m
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:\${HTTP_PORT:-8090}/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
-EOF
-    """
-}
-
-def createEnvFile(appConfig) {
-    sh """
-        cat > .env << 'EOF'
-HTTP_PORT=${env.HTTP_PORT}
-IMAGE_NAME=${appConfig.containerName}:${env.CONTAINER_TAG}
-SPRING_PROFILES_ACTIVE=${env.ENV_NAME}
-BUILD_NUMBER=${env.BUILD_NUMBER}
-EOF
-    """
-}
-
 def performHealthCheck(config) {
     try {
         echo "🏥 Health check..."
@@ -840,7 +991,14 @@ def performHealthCheck(config) {
                         script: "curl -f -s http://localhost:${env.HTTP_PORT}/actuator/health",
                         returnStatus: true
                     )
-                    return healthCheck == 0
+                    if (healthCheck == 0) {
+                        echo "✅ Application répond correctement"
+                        return true
+                    } else {
+                        echo "⏳ Application pas encore prête..."
+                        sleep(5)
+                        return false
+                    }
                 }
             }
         }
@@ -848,6 +1006,7 @@ def performHealthCheck(config) {
         echo "✅ Health check réussi"
 
     } catch (Exception e) {
+        sh "docker-compose logs ${config.serviceName} --tail 50 || true"
         error "❌ Health check échoué: ${e.getMessage()}"
     }
 }
@@ -870,13 +1029,13 @@ def cleanupDockerImages(config) {
 def displayBuildInfo(config) {
     echo """
     ================================================================================
-                      🚀 CONFIGURATION BUILD TOURGUIDE SIMPLIFIÉ
+                      🚀 CONFIGURATION BUILD TOURGUIDE AVEC NEXUS
     ================================================================================
      Build #: ${env.BUILD_NUMBER}
      Branch: ${env.BRANCH_NAME}
      Environment: ${env.ENV_NAME}
      Port externe: ${env.HTTP_PORT}
-     Java: 21
+     Java: 21 (Options corrigées)
      Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Disponible" : "⚠️ Indisponible"}
      Tag: ${env.CONTAINER_TAG}
      Service: ${config.serviceName}
@@ -889,16 +1048,17 @@ def displayBuildInfo(config) {
      ⚙️ NEXUS STATUS:
      • Activé: ${config.nexus.enabled ? "✅" : "❌"}
      ${config.nexus.enabled ? "• URL: ${config.nexus.url}" : "• Mode: Standard Maven"}
+     ${config.nexus.enabled ? "• Config File: ${config.nexus.configFileId}" : ""}
 
      🛡️ SECURITY:
-     • OWASP: Mode simplifié
+     • OWASP: Mode simplifié avec Nexus
      • Coverage: JaCoCo standard
-     • Tests: Configuration corrigée
+     • Tests: Configuration Java 21
 
      🐳 DOCKER:
-     • Compose: Configuration simplifiée
+     • Compose: Configuration Java 21
      • Health Check: Automatique
-     • Cleanup: Auto après build
+     • JVM Options: Corrigées pour Java 21
     ================================================================================
     """
 }
@@ -910,13 +1070,25 @@ def sendEnhancedNotification(recipients, config) {
 
         def subject = "[Jenkins] TourGuide - Build #${env.BUILD_NUMBER} - ${status} (${env.BRANCH_NAME})"
 
+        def nexusInfo = ""
+        if (config.nexus.enabled) {
+            nexusInfo = """
+        📦 NEXUS REPOSITORY:
+        • URL: ${config.nexus.url}
+        • Configuré: ✅ Via Config File Provider
+        • Config ID: ${config.nexus.configFileId}
+        • Artefact déployé: ${status == 'SUCCESS' ? '✅' : '⚠️'}
+        """
+        }
+
         def deploymentInfo = ""
         if (env.DOCKER_AVAILABLE == "true" && (status == 'SUCCESS' || status == 'UNSTABLE')) {
             deploymentInfo = """
-        🚀 DÉPLOIEMENT:
+        🚀 DÉPLOIEMENT JAVA 21:
         • Application: http://localhost:${env.HTTP_PORT}
         • Health Check: http://localhost:${env.HTTP_PORT}/actuator/health
         • Environnement: ${env.ENV_NAME}
+        • JVM Options: Corrigées pour Java 21
 
         📊 RAPPORTS:
         • Tests: ${env.BUILD_URL}testReport/
@@ -926,22 +1098,25 @@ def sendEnhancedNotification(recipients, config) {
         }
 
         def body = """
-        ${statusIcon} BUILD ${status} - TourGuide
+        ${statusIcon} BUILD ${status} - TourGuide avec Java 21 ${config.nexus.enabled ? '+ Nexus' : ''}
 
         📋 DÉTAILS:
         • Build: #${env.BUILD_NUMBER}
         • Branche: ${env.BRANCH_NAME}
         • Environnement: ${env.ENV_NAME}
         • Port: ${env.HTTP_PORT}
-        • Java: 21
+        • Java: 21 (Options JVM corrigées)
         • Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅" : "❌"}
+        • Nexus: ${config.nexus.enabled ? "✅" : "❌"}
         • Durée: ${currentBuild.durationString ?: 'N/A'}
 
+        ${nexusInfo}
         ${deploymentInfo}
 
         🔗 LIENS:
         • Console: ${env.BUILD_URL}console
         • Workspace: ${env.BUILD_URL}ws/
+        ${config.nexus.enabled ? "• Nexus Repository: ${config.nexus.url}" : ""}
 
         📅 ${new Date()}
         """

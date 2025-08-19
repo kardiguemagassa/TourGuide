@@ -30,8 +30,8 @@
 	</properties>
 
 	<!--
-	NOTE: Si Nexus est configuré dans Jenkins avec Config File Provider,
-	ne pas ajouter de repositories ici pour éviter les conflits
+	NOTE: Repositories Nexus supprimés - configurés dans Jenkins via Config File Provider
+	Évite les conflits entre POM et configuration Jenkins
 	-->
 
 	<dependencies>
@@ -138,17 +138,18 @@
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
 
-			<!-- Surefire Plugin SIMPLIFIÉ pour corriger les problèmes de tests -->
+			<!-- Surefire Plugin CORRIGÉ pour Java 21 -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
 				<version>${surefire.version}</version>
 				<configuration>
-					<!-- Configuration simplifiée pour éviter les conflits ByteBuddy -->
+					<!-- Configuration Java 21 compatible -->
 					<useSystemClassLoader>false</useSystemClassLoader>
 					<forkCount>1</forkCount>
 					<reuseForks>false</reuseForks>
-					<argLine>-Xmx1024m -XX:+UseContainerSupport</argLine>
+					<!-- SUPPRESSION de l'option UseContainerSupport pour Java 21 -->
+					<argLine>-Xmx1024m</argLine>
 					<includes>
 						<include>**/*Test.java</include>
 						<include>**/*Tests.java</include>
@@ -159,10 +160,14 @@
 					<!-- Génération des rapports XML pour Jenkins -->
 					<reportFormat>xml</reportFormat>
 					<useFile>true</useFile>
+					<!-- Configuration pour éviter les problèmes Java 21 -->
+					<systemPropertyVariables>
+						<java.awt.headless>true</java.awt.headless>
+					</systemPropertyVariables>
 				</configuration>
 			</plugin>
 
-			<!-- JaCoCo Plugin SIMPLIFIÉ -->
+			<!-- JaCoCo Plugin COMPATIBLE Java 21 -->
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
@@ -173,10 +178,24 @@
 						<goals>
 							<goal>prepare-agent</goal>
 						</goals>
+						<configuration>
+							<!-- Configuration compatible Java 21 -->
+							<destFile>${project.build.directory}/jacoco.exec</destFile>
+						</configuration>
 					</execution>
 					<execution>
 						<id>report</id>
 						<phase>test</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+						<configuration>
+							<dataFile>${project.build.directory}/jacoco.exec</dataFile>
+						</configuration>
+					</execution>
+					<execution>
+						<id>post-integration-test</id>
+						<phase>post-integration-test</phase>
 						<goals>
 							<goal>report</goal>
 						</goals>
@@ -217,23 +236,26 @@
 				</executions>
 			</plugin>
 
-			<!-- OWASP Dependency Check SIMPLIFIÉ -->
+			<!-- OWASP Dependency Check OPTIMISÉ -->
 			<plugin>
 				<groupId>org.owasp</groupId>
 				<artifactId>dependency-check-maven</artifactId>
 				<version>${owasp.version}</version>
 				<configuration>
-					<!-- Configuration simplifiée pour éviter les timeouts -->
+					<!-- Configuration simplifiée et rapide -->
 					<failBuildOnCVSS>0</failBuildOnCVSS>
 					<dataDirectory>${project.basedir}/dc-data</dataDirectory>
 					<suppressionFiles>
 						<suppressionFile>owasp-suppressions.xml</suppressionFile>
 					</suppressionFiles>
-					<!-- Désactiver les analyseurs lents -->
+					<!-- Désactiver les analyseurs lents pour Java 21 -->
 					<retireJsAnalyzerEnabled>false</retireJsAnalyzerEnabled>
 					<nodeAnalyzerEnabled>false</nodeAnalyzerEnabled>
 					<ossindexAnalyzerEnabled>false</ossindexAnalyzerEnabled>
-					<!--<nvdDatafeedEnabled>false</nvdDatafeedEnabled><-->
+					<!--<nvdDatafeedEnabled>false</nvdDatafeedEnabled> -->
+					<assemblyAnalyzerEnabled>false</assemblyAnalyzerEnabled>
+					<archiveAnalyzerEnabled>true</archiveAnalyzerEnabled>
+					<jarAnalyzerEnabled>true</jarAnalyzerEnabled>
 					<!-- Formats de rapport essentiels -->
 					<formats>
 						<format>HTML</format>
@@ -242,9 +264,33 @@
 					<!-- Skip pour accélérer -->
 					<skipProvidedScope>true</skipProvidedScope>
 					<skipSystemScope>true</skipSystemScope>
+					<skipTestScope>true</skipTestScope>
+					<!-- Timeout plus court -->
+					<connectionTimeout>10000</connectionTimeout>
+					<readTimeout>30000</readTimeout>
 				</configuration>
+			</plugin>
+
+			<!-- Surefire Report Plugin -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-report-plugin</artifactId>
+				<version>3.0.0-M7</version>
+				<executions>
+					<execution>
+						<phase>verify</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 		</plugins>
 	</build>
+
+	<!--
+	NOTE: distributionManagement supprimé - configuré dans settings.xml Nexus via Jenkins
+	Évite la duplication de configuration
+	-->
 
 </project>
