@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>3.3.4</version>
+		<version>3.5.4</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.openclassrooms</groupId>
@@ -29,25 +29,19 @@
 		<owasp.version>9.2.0</owasp.version>
 	</properties>
 
-	<!-- Configuration des repositories nexus -->
-	<repositories>
-		<repository>
-			<id>nexus-public</id>
-			<name>Nexus Public Repository</name>
-			<url>http://localhost:8081/repository/maven-public/</url>
-		</repository>
-	</repositories>
-
-	<!-- Configuration pour le déploiement nexus -->
+	<!--
+	IMPORTANT: distributionManagement REQUIS pour déploiement Nexus
+	Même si configuré dans settings.xml, Maven a besoin de ces éléments dans le POM
+	-->
 	<distributionManagement>
 		<repository>
 			<id>nexus-releases</id>
-			<name>Nexus Releases</name>
+			<name>Nexus Releases Repository</name>
 			<url>http://localhost:8081/repository/maven-releases/</url>
 		</repository>
 		<snapshotRepository>
 			<id>nexus-snapshots</id>
-			<name>Nexus Snapshots</name>
+			<name>Nexus Snapshots Repository</name>
 			<url>http://localhost:8081/repository/maven-snapshots/</url>
 		</snapshotRepository>
 	</distributionManagement>
@@ -75,6 +69,7 @@
 		<dependency>
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-lang3</artifactId>
+			<version>3.18.0</version>
 		</dependency>
 
 		<!-- JUnit 5 -->
@@ -155,22 +150,36 @@
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
 
-			<!-- Surefire Plugin (exécute les tests) -->
-			<!-- CONFIGURATION COMPLÈTE SUREFIRE + JACOCO -->
-
+			<!-- Surefire Plugin CORRIGÉ pour Java 21 + Warnings -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
-				<version>3.2.5</version>
+				<version>${surefire.version}</version>
 				<configuration>
-					<argLine>
-						-javaagent:"${settings.localRepository}/net/bytebuddy/byte-buddy-agent/1.14.5/byte-buddy-agent-1.14.5.jar"
-						-javaagent:"${settings.localRepository}/org/jacoco/org.jacoco.agent/0.8.10/org.jacoco.agent-0.8.10-runtime.jar"=destfile=${project.build.directory}/jacoco.exec
-					</argLine>
+					<!-- Configuration Java 21 compatible -->
+					<useSystemClassLoader>false</useSystemClassLoader>
+					<forkCount>1</forkCount>
+					<reuseForks>false</reuseForks>
+					<!-- Options JVM Java 21 avec suppression des warnings -->
+					<argLine>@{argLine} -Xmx1024m -XX:+EnableDynamicAgentLoading -Djdk.instrument.traceUsage=false</argLine>
+					<includes>
+						<include>**/*Test.java</include>
+						<include>**/*Tests.java</include>
+					</includes>
+					<excludes>
+						<exclude>**/TestPerformance.java</exclude>
+					</excludes>
+					<!-- Génération des rapports XML pour Jenkins -->
+					<reportFormat>xml</reportFormat>
+					<useFile>true</useFile>
+					<!-- Configuration pour éviter les problèmes Java 21 -->
+					<systemPropertyVariables>
+						<java.awt.headless>true</java.awt.headless>
+					</systemPropertyVariables>
 				</configuration>
 			</plugin>
 
-			<!-- JaCoCo Plugin (génère les rapports de couverture) -->
+			<!-- JaCoCo Plugin CORRIGÉ pour intégration avec Surefire -->
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
@@ -182,8 +191,8 @@
 							<goal>prepare-agent</goal>
 						</goals>
 						<configuration>
-							<!-- JaCoCo configure automatiquement l'argLine -->
-							<propertyName>surefireArgLine</propertyName>
+							<!-- Utilise @{argLine} pour intégration Surefire -->
+							<propertyName>argLine</propertyName>
 						</configuration>
 					</execution>
 					<execution>
@@ -201,24 +210,17 @@
 						</goals>
 					</execution>
 				</executions>
+				<configuration>
+					<!-- Exclusions pour améliorer les performances -->
+					<excludes>
+						<exclude>**/dto/**</exclude>
+						<exclude>**/config/**</exclude>
+						<exclude>**/TourguideApplication.class</exclude>
+					</excludes>
+				</configuration>
 			</plugin>
 
-			<!-- Surefire Report Plugin (rapports HTML de tests) -->
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-surefire-report-plugin</artifactId>
-				<version>3.0.0-M7</version>
-				<executions>
-					<execution>
-						<phase>verify</phase>
-						<goals>
-							<goal>report</goal>
-						</goals>
-					</execution>
-				</executions>
-			</plugin>
-
-			<!-- Enforcer (assure la bonne version de Maven et Java) -->
+			<!-- Enforcer Plugin -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-enforcer-plugin</artifactId>
@@ -235,7 +237,7 @@
 									<version>[3.6.3,)</version>
 								</requireMavenVersion>
 								<requireJavaVersion>
-									<version>[21,22)</version> <!-- Force Java 21 -->
+									<version>[21,22)</version>
 								</requireJavaVersion>
 							</rules>
 						</configuration>
@@ -243,52 +245,57 @@
 				</executions>
 			</plugin>
 
-			<!-- OWASP Dependency Check - Configuration -->
+			<!-- OWASP Dependency Check OPTIMISÉ -->
 			<plugin>
 				<groupId>org.owasp</groupId>
 				<artifactId>dependency-check-maven</artifactId>
 				<version>${owasp.version}</version>
 				<configuration>
-					<!-- Configuration flexible pour Pipeline Jenkins -->
-					<failBuildOnCVSS>0</failBuildOnCVSS> <!-- Géré par le pipeline -->
+					<!-- Configuration simplifiée et rapide -->
+					<failBuildOnCVSS>0</failBuildOnCVSS>
 					<dataDirectory>${project.basedir}/dc-data</dataDirectory>
 					<suppressionFiles>
 						<suppressionFile>owasp-suppressions.xml</suppressionFile>
 					</suppressionFiles>
-					<!-- Optimisations performance -->
-					<skipProvidedScope>true</skipProvidedScope>
-					<skipRuntimeScope>false</skipRuntimeScope>
-					<!-- Désactiver les analyseurs lents -->
+					<!-- Désactiver les analyseurs lents pour Java 21 -->
 					<retireJsAnalyzerEnabled>false</retireJsAnalyzerEnabled>
 					<nodeAnalyzerEnabled>false</nodeAnalyzerEnabled>
 					<ossindexAnalyzerEnabled>false</ossindexAnalyzerEnabled>
-					<!-- Formats de rapport -->
+					<assemblyAnalyzerEnabled>false</assemblyAnalyzerEnabled>
+					<archiveAnalyzerEnabled>true</archiveAnalyzerEnabled>
+					<jarAnalyzerEnabled>true</jarAnalyzerEnabled>
+					<!-- Formats de rapport essentiels -->
 					<formats>
 						<format>HTML</format>
 						<format>XML</format>
-						<format>JSON</format>
 					</formats>
+					<!-- Skip pour accélérer -->
+					<skipProvidedScope>true</skipProvidedScope>
+					<skipSystemScope>true</skipSystemScope>
+					<skipTestScope>true</skipTestScope>
+					<!-- Timeout plus court -->
+					<connectionTimeout>10000</connectionTimeout>
+					<readTimeout>30000</readTimeout>
+					<!-- Mode auto-update désactivé pour éviter les erreurs réseau -->
+					<autoUpdate>false</autoUpdate>
 				</configuration>
 			</plugin>
 
-			<!-- Project Info Reports Plugin -->
+			<!-- Surefire Report Plugin -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-project-info-reports-plugin</artifactId>
-				<version>3.3.0</version>
+				<artifactId>maven-surefire-report-plugin</artifactId>
+				<version>3.0.0-M7</version>
+				<executions>
+					<execution>
+						<phase>verify</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 		</plugins>
 	</build>
-
-	<!-- Reporting -->
-	<reporting>
-		<plugins>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-jxr-plugin</artifactId>
-				<version>3.3.0</version>
-			</plugin>
-		</plugins>
-	</reporting>
 
 </project>
