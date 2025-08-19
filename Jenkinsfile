@@ -125,7 +125,7 @@ pipeline {
                     anyOf {
                         branch 'master'
                         branch 'develop'
-                        branch 'nexustest'
+                        changeRequest() // ✅ OK - Analyse sur PR
                     }
                 }
             }
@@ -143,7 +143,7 @@ pipeline {
                     anyOf {
                         branch 'master'
                         branch 'develop'
-                        branch 'nexustest'
+                        changeRequest() // ✅ OK - Quality Gate sur PR
                     }
                 }
             }
@@ -161,7 +161,6 @@ pipeline {
                     anyOf {
                         branch 'master'
                         branch 'develop'
-                        branch 'nexustest'
                     }
                 }
             }
@@ -179,7 +178,7 @@ pipeline {
                         anyOf {
                             branch 'master'
                             branch 'develop'
-                            branch 'nexustest'
+                            changeRequest() // ✅ OK - Sécurité sur PR
                         }
                     }
                     steps {
@@ -212,7 +211,6 @@ pipeline {
                     anyOf {
                         branch 'master'
                         branch 'develop'
-                        branch 'nexustest'
                     }
                     expression {
                         return env.DOCKER_AVAILABLE == "true"
@@ -227,13 +225,12 @@ pipeline {
             }
         }
 
-        stage('Deploy') {
+        stage('Deploy Application') {
             when {
                 allOf {
                     anyOf {
                         branch 'master'
                         branch 'develop'
-                        branch 'nexustest'
                     }
                     expression {
                         return env.DOCKER_AVAILABLE == "true"
@@ -242,7 +239,14 @@ pipeline {
             }
             steps {
                 script {
-                    deployWithDockerComposeJava21Fixed(config)
+                    // Déploiement avec logique par environnement
+                    if (env.BRANCH_NAME == 'master') {
+                        echo "🏭 Déploiement PRODUCTION"
+                        deployToProduction(config)
+                    } else if (env.BRANCH_NAME == 'develop') {
+                        echo "🧪 Déploiement STAGING"
+                        deployToStaging(config)
+                    }
                 }
             }
         }
@@ -253,7 +257,6 @@ pipeline {
                     anyOf {
                         branch 'master'
                         branch 'develop'
-                        branch 'nexustest'
                     }
                     expression {
                         return env.DOCKER_AVAILABLE == "true"
@@ -285,6 +288,35 @@ pipeline {
             }
         }
     }
+}
+
+// =============================================================================
+// FONCTIONS DE DÉPLOIEMENT PAR ENVIRONNEMENT
+// =============================================================================
+
+def deployToProduction(config) {
+    echo "🏭 Déploiement en PRODUCTION (master)"
+
+    // Vérifications supplémentaires pour la production
+    if (currentBuild.result == 'FAILURE') {
+        error "❌ Déploiement production annulé - build en échec"
+    }
+
+    // Déploiement production avec configuration spéciale
+    env.HTTP_PORT = config.ports.master
+    env.ENV_NAME = config.environments.master
+
+    deployWithDockerComposeJava21Fixed(config)
+}
+
+def deployToStaging(config) {
+    echo "🧪 Déploiement en STAGING (develop)"
+
+    // Déploiement staging
+    env.HTTP_PORT = config.ports.develop
+    env.ENV_NAME = config.environments.develop
+
+    deployWithDockerComposeJava21Fixed(config)
 }
 
 // =============================================================================
@@ -367,7 +399,7 @@ def waitForSonarQubeQualityGate(config) {
 }
 
 // =============================================================================
-// FONCTIONS buildWithNexusJava21
+// FONCTIONS BUILD ET MAVEN
 // =============================================================================
 
 def buildWithNexusJava21(config) {
@@ -501,7 +533,7 @@ def installLocalJars() {
 }
 
 // =============================================================================
-// AUTRES FONCTIONS (TOUTES LES FONCTIONS DOCKER, NEXUS, UTILS, ETC.)
+// FONCTIONS DOCKER
 // =============================================================================
 
 def buildDockerImageJava21Fixed(config) {
@@ -678,6 +710,10 @@ EOF
     echo "✅ Fichier .env Java 21 créé"
 }
 
+// =============================================================================
+// FONCTIONS NEXUS
+// =============================================================================
+
 def validateNexusConfiguration(config) {
     echo "🔍 Validation de la configuration Nexus..."
     try {
@@ -747,7 +783,7 @@ def deployToNexusRepository(config) {
 }
 
 // =============================================================================
-// AUTRES FONCTIONS UTILITAIRES
+// FONCTIONS OWASP ET SÉCURITÉ
 // =============================================================================
 
 def runOwaspDependencyCheckSimple(config) {
@@ -1133,17 +1169,11 @@ def cleanupDockerImages(config) {
     try {
         echo "🧹 Nettoyage Docker..."
         sh """
-            # Arrêt des conteneurs TourGuide
-            docker ps -a --filter "name=tourguide" --format "{{.Names}}" | xargs docker rm -f 2>/dev/null || true
-
-            # Arrêt via docker-compose
             docker-compose down --remove-orphans || true
-
-            # Nettoyage standard
             docker image prune -f --filter "until=24h" || true
             docker container prune -f || true
             docker volume prune -f || true
-            docker network prune -f || true  # ← AJOUT UTILE de votre version
+            docker network prune -f || true  # ← AJOUT
         """
         echo "✅ Nettoyage Docker terminé"
     } catch (Exception e) {
