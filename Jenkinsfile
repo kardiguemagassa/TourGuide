@@ -1745,7 +1745,7 @@ def publishTestAndCoverageResults() {
         echo "📤 Tentative de publication avec le pattern: ${workingPattern}"
 
         try {
-            // Méthode 1: junit() avec le pattern qui fonctionne
+            // Méthode 1: junit() - La plus moderne et fiable
             junit(
                 testResults: workingPattern,
                 allowEmptyResults: false,
@@ -1767,19 +1767,63 @@ def publishTestAndCoverageResults() {
             } catch (Exception e2) {
                 echo "⚠️ publishTestResults() échoué: ${e2.getMessage()}"
 
+                // ✅ MÉTHODE 3 ALTERNATIVE: Archive simple + log informatif
                 try {
-                    // Méthode 3: step() - la plus compatible
-                    step([
-                        $class: 'JUnitResultArchiver',
-                        testResults: workingPattern,
-                        allowEmptyResults: false
-                    ])
-                    echo "✅ Tests publiés avec step(JUnitResultArchiver)"
+                    // Archive des résultats de tests XML
+                    archiveArtifacts(
+                        artifacts: workingPattern,
+                        allowEmptyArchive: true,
+                        fingerprint: false
+                    )
+                    echo "✅ Fichiers de tests archivés avec archiveArtifacts()"
+
+                    // Affichage des résultats via shell
+                    sh """
+                        echo "📊 RÉSUMÉ DES TESTS:"
+                        echo "==================="
+
+                        TOTAL_TESTS=0
+                        FAILED_TESTS=0
+
+                        for file in ${workingPattern}; do
+                            if [ -f "\$file" ]; then
+                                echo "📋 Analyse du fichier: \$file"
+
+                                # Extraction des statistiques de tests
+                                TESTS=\$(grep -o 'tests="[0-9]*"' "\$file" | cut -d'"' -f2 || echo "0")
+                                FAILURES=\$(grep -o 'failures="[0-9]*"' "\$file" | cut -d'"' -f2 || echo "0")
+                                ERRORS=\$(grep -o 'errors="[0-9]*"' "\$file" | cut -d'"' -f2 || echo "0")
+
+                                if [ ! -z "\$TESTS" ] && [ "\$TESTS" != "0" ]; then
+                                    echo "  ✅ Tests: \$TESTS"
+                                    echo "  ❌ Échecs: \$FAILURES"
+                                    echo "  🚨 Erreurs: \$ERRORS"
+
+                                    TOTAL_TESTS=\$((TOTAL_TESTS + TESTS))
+                                    FAILED_TESTS=\$((FAILED_TESTS + FAILURES + ERRORS))
+                                fi
+                            fi
+                        done
+
+                        echo ""
+                        echo "🎯 RÉSULTATS GLOBAUX:"
+                        echo "Total des tests: \$TOTAL_TESTS"
+                        echo "Tests échoués: \$FAILED_TESTS"
+                        echo "Tests réussis: \$((TOTAL_TESTS - FAILED_TESTS))"
+
+                        if [ \$FAILED_TESTS -gt 0 ]; then
+                            echo "⚠️ Il y a des tests en échec"
+                        else
+                            echo "✅ Tous les tests sont passés"
+                        fi
+                    """
+
                 } catch (Exception e3) {
                     echo "❌ Toutes les méthodes ont échoué:"
                     echo "  junit(): ${e1.getMessage()}"
                     echo "  publishTestResults(): ${e2.getMessage()}"
-                    echo "  step(): ${e3.getMessage()}"
+                    echo "  archiveArtifacts(): ${e3.getMessage()}"
+                    echo "⏭️ Continuation du pipeline sans publication de tests"
                 }
             }
         }
@@ -1796,7 +1840,11 @@ def publishTestAndCoverageResults() {
             echo "Tous les fichiers .xml dans le projet:"
             find . -name "*.xml" -type f 2>/dev/null | grep -v ".git" | head -20
 
-            echo "Historique des commandes Maven:"
-            cat .maven.log 2>/dev/null | tail -20 || echo "Pas de log Maven trouvé"
+            echo "Vérification Maven:"
+            mvn -version || echo "Maven non disponible"
         '''
     }
+
+    // Publication JaCoCo (simplifié mais robuste)
+    publishJacocoReports()
+}
