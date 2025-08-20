@@ -52,30 +52,21 @@ public class TestRewardsService {
 	}
 
 	@Test
-	void userGetRewards() throws InterruptedException {
+	void userGetRewards() {
 		User user = new User(UUID.randomUUID(), "jon", "000", "jon@tourGuide.com");
 		Attraction attraction = gpsUtil.getAttractions().getFirst();
 		user.addToVisitedLocations(new VisitedLocation(user.getUserId(), attraction, new Date()));
 
 		tourGuideService.trackUserLocation(user);
 
-		// Thread.sleep() - SonarQube compliant
-		CountDownLatch latch = new CountDownLatch(1);
-		CompletableFuture.runAsync(() -> {
-			try {
-				Thread.sleep(1000); // OK dans un thread séparé
-			} catch (InterruptedException e) {
-				Thread.currentThread().interrupt();
-			}
-			latch.countDown();
-		});
+		// SANS Thread.sleep()
+		long timeout = 2000; // 2 secondes max
+		long start = System.currentTimeMillis();
 
-		try {
-			assertTrue(latch.await(2, TimeUnit.SECONDS),
-					"Timeout : calcul asynchrone non terminé");
-		} catch (InterruptedException e) {
-			Thread.currentThread().interrupt();
-			fail("Test interrompu");
+		while (user.getUserRewards().isEmpty()) {
+			if (System.currentTimeMillis() - start > timeout) {
+				fail("Timeout : aucune récompense calculée dans les 2 secondes");
+			}
 		}
 
 		List<UserReward> userRewards = user.getUserRewards();
