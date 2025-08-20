@@ -29,9 +29,22 @@
 		<owasp.version>9.2.0</owasp.version>
 	</properties>
 
+	<!-- distributionManagement des profils -->
+	<distributionManagement>
+		<repository>
+			<id>nexus-releases</id>
+			<name>Nexus Releases Repository</name>
+			<url>http://localhost:8081/repository/maven-releases/</url>
+		</repository>
+		<snapshotRepository>
+			<id>nexus-snapshots</id>
+			<name>Nexus Snapshots Repository</name>
+			<url>http://localhost:8081/repository/maven-snapshots/</url>
+		</snapshotRepository>
+	</distributionManagement>
+
 	<!-- Configuration par profils pour Nexus -->
 	<profiles>
-		<!-- Profil Jenkins (activé automatiquement quand BUILD_NUMBER existe) -->
 		<profile>
 			<id>jenkins</id>
 			<activation>
@@ -39,27 +52,15 @@
 					<name>env.BUILD_NUMBER</name>
 				</property>
 			</activation>
-			<!-- Jenkins utilise son settings.xml via Config File Provider -->
+			<!-- Plus de distributionManagement ici -->
 		</profile>
 
-		<!-- Profil local (activé par défaut) -->
 		<profile>
 			<id>local</id>
 			<activation>
 				<activeByDefault>true</activeByDefault>
 			</activation>
-			<distributionManagement>
-				<repository>
-					<id>nexus-releases</id>
-					<name>Nexus Releases Repository</name>
-					<url>http://localhost:8081/repository/maven-releases/</url>
-				</repository>
-				<snapshotRepository>
-					<id>nexus-snapshots</id>
-					<name>Nexus Snapshots Repository</name>
-					<url>http://localhost:8081/repository/maven-snapshots/</url>
-				</snapshotRepository>
-			</distributionManagement>
+			<!-- Plus de distributionManagement ici -->
 		</profile>
 	</profiles>
 
