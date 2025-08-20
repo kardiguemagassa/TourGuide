@@ -25,6 +25,9 @@ import org.junit.jupiter.api.AfterEach;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import org.awaitility.Awaitility;
+import java.time.Duration;
+
 public class TestRewardsService {
 
 	private final static org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(TestRewardsService.class);
@@ -52,7 +55,7 @@ public class TestRewardsService {
 	}
 
 	@Test
-	public void userGetRewards() throws InterruptedException {
+	void userGetRewards() throws InterruptedException {
 		User user = new User(UUID.randomUUID(), "jon", "000", "jon@tourGuide.com");
 		Attraction attraction = gpsUtil.getAttractions().getFirst();
 		user.addToVisitedLocations(new VisitedLocation(user.getUserId(), attraction, new Date()));
@@ -65,7 +68,7 @@ public class TestRewardsService {
 	}
 
 	@Test
-	public void isWithinAttractionProximity() {
+	void isWithinAttractionProximity() {
 		Attraction attraction = gpsUtil.getAttractions().getFirst();
 		assertTrue(rewardsService.isWithinAttractionProximity(attraction, attraction));
 	}
@@ -73,39 +76,26 @@ public class TestRewardsService {
 	@Test
 	void nearAllAttractions() {
 		rewardsService.setProximityBuffer(Integer.MAX_VALUE);
-
 		InternalTestHelper.setInternalUserNumber(1);
 		TourGuideService localTourGuideService = new TourGuideService(gpsUtil, rewardsService);
 
 		User user = localTourGuideService.getAllUsers().getFirst();
 		rewardsService.calculateRewards(user);
 
-		// Attendre que les récompenses soient calculées
-		long timeout = 2000;
-		long pollInterval = 50;
-		long start = System.currentTimeMillis();
-
-		while (user.getUserRewards().isEmpty()) {
-			if (System.currentTimeMillis() - start > timeout) {
-				fail("Timeout après " + timeout + "ms : aucune récompense calculée");
-			}
-			try {
-				Thread.sleep(pollInterval);
-			} catch (InterruptedException e) {
-				Thread.currentThread().interrupt();
-				fail("Test interrompu");
-			}
-		}
+		Awaitility.await()
+				.atMost(Duration.ofSeconds(2))
+				.pollInterval(Duration.ofMillis(50))
+				.until(() -> !user.getUserRewards().isEmpty());
 
 		List<UserReward> userRewards = user.getUserRewards();
-        assertFalse(userRewards.isEmpty(), "L'utilisateur devrait avoir des récompenses");
+		assertFalse(userRewards.isEmpty(), "L'utilisateur devrait avoir des récompenses");
 		LOGGER.info("Nombre de récompenses trouvées: {}", userRewards.size());
 
 		localTourGuideService.shutdown();
 	}
 
 	@Test
-	public void shutdownMultipleTimes() {
+	void shutdownMultipleTimes() {
 		RewardsService testService = new RewardsService(gpsUtil, new RewardCentral());
 
 		// Premier shutdown
@@ -116,9 +106,9 @@ public class TestRewardsService {
 	}
 
 	@Test
-	public void concurrentRewardCalculation() throws ExecutionException, InterruptedException, TimeoutException {
+	void concurrentRewardCalculation() throws ExecutionException, InterruptedException, TimeoutException {
 		List<User> users = new ArrayList<>();
-		Attraction attraction = gpsUtil.getAttractions().get(0);
+		Attraction attraction = gpsUtil.getAttractions().getFirst();
 
 		// Créer plusieurs utilisateurs avec des locations près de la même attraction
 		for (int i = 0; i < 5; i++) {

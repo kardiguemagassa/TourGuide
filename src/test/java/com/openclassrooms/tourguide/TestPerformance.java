@@ -36,13 +36,13 @@ public class TestPerformance {
 	private RewardsService rewardsService;
 
 	@BeforeEach
-	public void setUp() {
+	void setUp() {
 		gpsUtil = new GpsUtil();
 		rewardsService = new RewardsService(gpsUtil, new RewardCentral());
 	}
 
 	@AfterEach
-	public void tearDown() {
+	void tearDown() {
 		if (tourGuideService != null) {
 			tourGuideService.shutdown();
 		}
@@ -61,18 +61,9 @@ public class TestPerformance {
 		);
 	}
 
-	// Petits tests pour validation rapide
-	private static Stream<Arguments> quickTestProvider() {
-		return Stream.of(
-				Arguments.of(10, 5, 5),     // Tests rapides pour validation
-				Arguments.of(50, 10, 10),
-				Arguments.of(100, 15, 20)
-		);
-	}
-
 	@ParameterizedTest
 	@MethodSource("userCountProvider")
-	public void highVolumeTrackLocation(int userCount, int maxTrackTimeSeconds, int maxRewardTimeSeconds) {
+	void highVolumeTrackLocation(int userCount, int maxTrackTimeSeconds, int maxRewardTimeSeconds) {
 		LOGGER.info("======> Start highVolumeTrackLocation with {} users <=======", userCount);
 
 		// Informations système pour contexte
@@ -115,8 +106,8 @@ public class TestPerformance {
 		double usersPerSecond = userCount / (double) TimeUnit.MILLISECONDS.toSeconds(stopWatch.getTime());
 
 		LOGGER.info("highVolumeTrackLocation with {} users: Time Elapsed: {} seconds.", userCount, timeElapsed);
-		LOGGER.info("Performance: {:.3f} ms per user", avgTimePerUser);
-		LOGGER.info("Throughput: {:.1f} users/second", usersPerSecond);
+		LOGGER.info("Performance: {} ms per user", String.format("%.3f", avgTimePerUser));
+		LOGGER.info("Throughput: {} users/second", String.format("%.1f", usersPerSecond));
 
 		// Assertion avec message informatif
 		assertTrue(timeElapsed <= maxTrackTimeSeconds, String.format(
@@ -126,7 +117,7 @@ public class TestPerformance {
 
 	@ParameterizedTest
 	@MethodSource("userCountProvider")
-	public void highVolumeGetRewards(int userCount, int maxTrackTimeSeconds, int maxRewardTimeSeconds) {
+	void highVolumeGetRewards(int userCount, int maxTrackTimeSeconds, int maxRewardTimeSeconds) {
 		LOGGER.info("======> Start highVolumeGetRewards with {} users <=======", userCount);
 
 		logSystemInfo();
@@ -176,8 +167,8 @@ public class TestPerformance {
 		double usersPerSecond = userCount / (double) TimeUnit.MILLISECONDS.toSeconds(stopWatch.getTime());
 
 		LOGGER.info("highVolumeGetRewards with {} users: Time Elapsed: {} seconds.", userCount, timeElapsed);
-		LOGGER.info("Performance: {:.3f} ms per user", avgTimePerUser);
-		LOGGER.info("Throughput: {:.1f} users/second", usersPerSecond);
+		LOGGER.info("Performance: {} ms per user", String.format("%.3f", avgTimePerUser));
+		LOGGER.info("Throughput: {} users/second", String.format("%.1f", usersPerSecond));
 		LOGGER.info("Total rewards calculated: {}", usersWithRewards);
 
 		assertTrue(timeElapsed <= maxRewardTimeSeconds, String.format(
@@ -187,7 +178,7 @@ public class TestPerformance {
 
 	// Test de performance avec surveillance mémoire
 	@Test
-	public void memoryPerformanceTest() {
+	void memoryPerformanceTest() {
 		LOGGER.info("======> Memory Performance Test <=======");
 
 		Runtime runtime = Runtime.getRuntime();
