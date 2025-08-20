@@ -29,22 +29,39 @@
 		<owasp.version>9.2.0</owasp.version>
 	</properties>
 
-	<!--
-	IMPORTANT: distributionManagement REQUIS pour déploiement Nexus
-	Même si configuré dans settings.xml, Maven a besoin de ces éléments dans le POM
-	-->
-	<distributionManagement>
-		<repository>
-			<id>nexus-releases</id>
-			<name>Nexus Releases Repository</name>
-			<url>http://localhost:8081/repository/maven-releases/</url>
-		</repository>
-		<snapshotRepository>
-			<id>nexus-snapshots</id>
-			<name>Nexus Snapshots Repository</name>
-			<url>http://localhost:8081/repository/maven-snapshots/</url>
-		</snapshotRepository>
-	</distributionManagement>
+	<!-- Configuration par profils pour Nexus -->
+	<profiles>
+		<!-- Profil Jenkins (activé automatiquement quand BUILD_NUMBER existe) -->
+		<profile>
+			<id>jenkins</id>
+			<activation>
+				<property>
+					<name>env.BUILD_NUMBER</name>
+				</property>
+			</activation>
+			<!-- Jenkins utilise son settings.xml via Config File Provider -->
+		</profile>
+
+		<!-- Profil local (activé par défaut) -->
+		<profile>
+			<id>local</id>
+			<activation>
+				<activeByDefault>true</activeByDefault>
+			</activation>
+			<distributionManagement>
+				<repository>
+					<id>nexus-releases</id>
+					<name>Nexus Releases Repository</name>
+					<url>http://localhost:8081/repository/maven-releases/</url>
+				</repository>
+				<snapshotRepository>
+					<id>nexus-snapshots</id>
+					<name>Nexus Snapshots Repository</name>
+					<url>http://localhost:8081/repository/maven-snapshots/</url>
+				</snapshotRepository>
+			</distributionManagement>
+		</profile>
+	</profiles>
 
 	<dependencies>
 		<dependency>
@@ -122,23 +139,23 @@
 			<version>3.1.8</version>
 		</dependency>
 
-		<!-- CORRECTIONS DE SÉCURITÉ -->
+		<!-- SÉCURITÉ -->
 		<dependency>
 			<groupId>com.google.guava</groupId>
 			<artifactId>guava</artifactId>
-			<version>32.1.3-jre</version> <!-- Fixe CVE-2023-2976 -->
+			<version>32.1.3-jre</version>
 		</dependency>
 
 		<dependency>
 			<groupId>org.yaml</groupId>
 			<artifactId>snakeyaml</artifactId>
-			<version>2.2</version> <!-- Fixe CVE-2022-1471 -->
+			<version>2.2</version>
 		</dependency>
 
 		<dependency>
 			<groupId>org.apache.tomcat.embed</groupId>
 			<artifactId>tomcat-embed-core</artifactId>
-			<version>10.1.39</version> <!-- Version corrigée de Tomcat -->
+			<version>10.1.39</version>
 		</dependency>
 
 	</dependencies>
@@ -150,36 +167,35 @@
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
 
-			<!-- Surefire Plugin CORRIGÉ pour Java 21 + Warnings -->
+			<!-- Surefire Plugin pour Java 21 -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
 				<version>${surefire.version}</version>
 				<configuration>
-					<!-- Configuration Java 21 compatible -->
+					<!-- TIMEOUT -->
+					<!--<forkedProcessTimeoutInSeconds>900</forkedProcessTimeoutInSeconds>  15 minutes -->
 					<useSystemClassLoader>false</useSystemClassLoader>
 					<forkCount>1</forkCount>
 					<reuseForks>false</reuseForks>
-					<!-- Options JVM Java 21 avec suppression des warnings -->
 					<argLine>@{argLine} -Xmx1024m -XX:+EnableDynamicAgentLoading -Djdk.instrument.traceUsage=false</argLine>
-					<includes>
+					<!--<includes>
 						<include>**/*Test.java</include>
 						<include>**/*Tests.java</include>
-					</includes>
+						<include>**/SimpleValidationTest.java</include>
+					</includes>-->
 					<excludes>
 						<exclude>**/TestPerformance.java</exclude>
 					</excludes>
-					<!-- Génération des rapports XML pour Jenkins -->
 					<reportFormat>xml</reportFormat>
 					<useFile>true</useFile>
-					<!-- Configuration pour éviter les problèmes Java 21 -->
 					<systemPropertyVariables>
 						<java.awt.headless>true</java.awt.headless>
 					</systemPropertyVariables>
 				</configuration>
 			</plugin>
 
-			<!-- JaCoCo Plugin CORRIGÉ pour intégration avec Surefire -->
+			<!-- JaCoCo Plugin FINAL - sans post-integration-test -->
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
@@ -191,7 +207,6 @@
 							<goal>prepare-agent</goal>
 						</goals>
 						<configuration>
-							<!-- Utilise @{argLine} pour intégration Surefire -->
 							<propertyName>argLine</propertyName>
 						</configuration>
 					</execution>
@@ -202,16 +217,9 @@
 							<goal>report</goal>
 						</goals>
 					</execution>
-					<execution>
-						<id>post-integration-test</id>
-						<phase>post-integration-test</phase>
-						<goals>
-							<goal>report</goal>
-						</goals>
-					</execution>
+					<!-- PAS de post-integration-test ici ! -->
 				</executions>
 				<configuration>
-					<!-- Exclusions pour améliorer les performances -->
 					<excludes>
 						<exclude>**/dto/**</exclude>
 						<exclude>**/config/**</exclude>
@@ -245,52 +253,53 @@
 				</executions>
 			</plugin>
 
-			<!-- OWASP Dependency Check OPTIMISÉ -->
+			<!-- OWASP Dependency Check -->
 			<plugin>
 				<groupId>org.owasp</groupId>
 				<artifactId>dependency-check-maven</artifactId>
 				<version>${owasp.version}</version>
 				<configuration>
-					<!-- Configuration simplifiée et rapide -->
 					<failBuildOnCVSS>0</failBuildOnCVSS>
 					<dataDirectory>${project.basedir}/dc-data</dataDirectory>
 					<suppressionFiles>
 						<suppressionFile>owasp-suppressions.xml</suppressionFile>
 					</suppressionFiles>
-					<!-- Désactiver les analyseurs lents pour Java 21 -->
 					<retireJsAnalyzerEnabled>false</retireJsAnalyzerEnabled>
 					<nodeAnalyzerEnabled>false</nodeAnalyzerEnabled>
 					<ossindexAnalyzerEnabled>false</ossindexAnalyzerEnabled>
 					<assemblyAnalyzerEnabled>false</assemblyAnalyzerEnabled>
 					<archiveAnalyzerEnabled>true</archiveAnalyzerEnabled>
 					<jarAnalyzerEnabled>true</jarAnalyzerEnabled>
-					<!-- Formats de rapport essentiels -->
 					<formats>
 						<format>HTML</format>
 						<format>XML</format>
 					</formats>
-					<!-- Skip pour accélérer -->
 					<skipProvidedScope>true</skipProvidedScope>
 					<skipSystemScope>true</skipSystemScope>
 					<skipTestScope>true</skipTestScope>
-					<!-- Timeout plus court -->
 					<connectionTimeout>10000</connectionTimeout>
 					<readTimeout>30000</readTimeout>
-					<!-- Mode auto-update désactivé pour éviter les erreurs réseau -->
 					<autoUpdate>false</autoUpdate>
 				</configuration>
 			</plugin>
 
-			<!-- Surefire Report Plugin -->
+			<!-- Surefire Report Plugin FINAL -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-report-plugin</artifactId>
 				<version>3.0.0-M7</version>
+				<configuration>
+					<linkXRef>false</linkXRef>
+					<reportsDirectories>
+						<reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>
+					</reportsDirectories>
+				</configuration>
 				<executions>
 					<execution>
-						<phase>verify</phase>
+						<id>test-report</id>
+						<phase>test</phase>
 						<goals>
-							<goal>report</goal>
+							<goal>report-only</goal>
 						</goals>
 					</execution>
 				</executions>
