@@ -566,40 +566,40 @@ def createDockerfileJava21() {
         FROM eclipse-temurin:21-jre-alpine
 
         # Installing the tools
-RUN apk --no-cache add curl bash && \\
-    rm -rf /var/cache/apk/*
+        RUN apk --no-cache add curl bash && \\
+            rm -rf /var/cache/apk/*
 
-# Non-root user
-RUN addgroup -g 1000 -S spring && \\
-    adduser -u 1000 -S spring -G spring
+        # Non-root user
+        RUN addgroup -g 1000 -S spring && \\
+            adduser -u 1000 -S spring -G spring
 
-WORKDIR /opt/app
-RUN mkdir -p logs config data && \\
-    chown -R spring:spring /opt/app
+        WORKDIR /opt/app
+            RUN mkdir -p logs config data && \\
+            chown -R spring:spring /opt/app
 
-# Copy of the JAR
-ARG JAR_FILE=target/*.jar
-COPY --chown=spring:spring \${JAR_FILE} app.jar
+        # Copy of the JAR
+        ARG JAR_FILE=target/*.jar
+        COPY --chown=spring:spring \${JAR_FILE} app.jar
 
-# Script d'entrée amélioré pour Java 21
-COPY --chown=spring:spring entrypoint.sh* ./
-RUN if [ -f entrypoint.sh ]; then chmod +x entrypoint.sh; fi
+        # Script d'entrée amélioré pour Java 21
+        COPY --chown=spring:spring entrypoint.sh* ./
+        RUN if [ -f entrypoint.sh ]; then chmod +x entrypoint.sh; fi
 
-USER spring
-EXPOSE 8080 8090 8091 8092
+        USER spring
+        EXPOSE 8080 8090 8091 8092
 
-# Java 21 Environment Variables
-ENV JAVA_OPTS=""
-ENV SERVER_PORT=8090
-ENV SPRING_PROFILES_ACTIVE=dev
+        # Java 21 Environment Variables
+        ENV JAVA_OPTS=""
+        ENV SERVER_PORT=8090
+        ENV SPRING_PROFILES_ACTIVE=dev
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \\
-    CMD curl -f http://localhost:\${SERVER_PORT}/actuator/health || exit 1
+        # Health check
+        HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \\
+            CMD curl -f http://localhost:\${SERVER_PORT}/actuator/health || exit 1
 
-# Java 21 compatible entry point
-ENTRYPOINT ["sh", "-c", "java \$JAVA_OPTS -jar app.jar"]
-EOF
+        # Java 21 compatible entry point
+        ENTRYPOINT ["sh", "-c", "java \$JAVA_OPTS -jar app.jar"]
+        EOF
     """
     echo "✅ Java 21 Dockerfile created"
 }
@@ -1013,26 +1013,26 @@ def createOwaspErrorReport(Exception e) {
     sh """
         mkdir -p target
         cat > target/dependency-check-report.html << 'EOF'
-<!DOCTYPE html>
-<html>
-<head>
-    <title>OWASP Dependency Check - Error</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
-        .error { color: #d32f2f; background: #ffebee; padding: 20px; border-radius: 4px; }
-    </style>
-</head>
-<body>
-    <h1>🛡️ OWASP Dependency Check - TourGuide</h1>
-    <div class="error">
-        <h2>⚠️ Security scan unavailable</h2>
-        <p><strong>Error:</strong> ${e.getMessage()}</p>
-        <p><strong>Build:</strong> #${env.BUILD_NUMBER}</p>
-        <p><strong>Branch:</strong> ${env.BRANCH_NAME}</p>
-    </div>
-</body>
-</html>
-EOF
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>OWASP Dependency Check - Error</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 40px; }
+                .error { color: #d32f2f; background: #ffebee; padding: 20px; border-radius: 4px; }
+            </style>
+        </head>
+        <body>
+            <h1>🛡️ OWASP Dependency Check - TourGuide</h1>
+            <div class="error">
+                <h2>⚠️ Security scan unavailable</h2>
+                <p><strong>Error:</strong> ${e.getMessage()}</p>
+                <p><strong>Build:</strong> #${env.BUILD_NUMBER}</p>
+                <p><strong>Branch:</strong> ${env.BRANCH_NAME}</p>
+            </div>
+        </body>
+        </html>
+        EOF
     """
 }
 
@@ -1165,9 +1165,9 @@ def cleanupDockerImages(config) {
 
 def displayBuildInfo(config) {
     echo """
-    ================================================================================
+    ================================================================================================================
                   🚀 CONFIGURATION BUILD TOURGUIDE WITH NEXUS + SONARQUBE
-    ================================================================================
+    =================================================================================================================
      Build #: ${env.BUILD_NUMBER}
      Branch: ${env.BRANCH_NAME}
      Environment: ${env.ENV_NAME}
@@ -1203,7 +1203,7 @@ def displayBuildInfo(config) {
      • Compose: Configuration Java 21
      • Health Check: Automatic
      • JVM Options: Java 21
-    ================================================================================
+    ==================================================================================================================
     """
 }
 
