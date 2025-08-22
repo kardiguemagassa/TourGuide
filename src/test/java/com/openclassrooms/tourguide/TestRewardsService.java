@@ -104,6 +104,10 @@ public class TestRewardsService {
 	@Test
 	void highVolumeGetRewards() {
 		LOGGER.info("======> Start highVolumeGetRewards with 100 users <=======");
+		InternalTestHelper.setInternalUserNumber(100);
+		TourGuideService localTourGuideService = new TourGuideService(gpsUtil, rewardsService);
+		List<User> users = localTourGuideService.getAllUsers();
+		assertEquals(100, users.size(), "The number of users created must match");
 	}
 
 	@Test

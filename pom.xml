@@ -19,17 +19,17 @@
 		<maven.compiler.source>21</maven.compiler.source>
 		<maven.compiler.target>21</maven.compiler.target>
 
-		<!-- Configuration pour les tests -->
+		<!-- Configuration for tests -->
 		<skipTests>false</skipTests>
 		<maven.test.skip>false</maven.test.skip>
 
-		<!-- Versions des plugins -->
+		<!-- plugins versions-->
 		<jacoco.version>0.8.10</jacoco.version>
 		<surefire.version>3.2.5</surefire.version>
 		<owasp.version>9.2.0</owasp.version>
 	</properties>
 
-	<!-- distributionManagement des profils -->
+	<!-- distributionProfile management -->
 	<distributionManagement>
 		<repository>
 			<id>nexus-releases</id>
@@ -43,7 +43,7 @@
 		</snapshotRepository>
 	</distributionManagement>
 
-	<!-- Configuration par profils pour Nexus -->
+	<!-- Profile configuration for Nexus -->
 	<profiles>
 		<profile>
 			<id>jenkins</id>
@@ -52,15 +52,12 @@
 					<name>env.BUILD_NUMBER</name>
 				</property>
 			</activation>
-			<!-- Plus de distributionManagement ici -->
 		</profile>
-
 		<profile>
 			<id>local</id>
 			<activation>
 				<activeByDefault>true</activeByDefault>
 			</activation>
-			<!-- Plus de distributionManagement ici -->
 		</profile>
 	</profiles>
 
@@ -114,7 +111,7 @@
 			<scope>test</scope>
 		</dependency>
 
-		<!-- Dépendances locales -->
+		<!-- Local dependencies -->
 		<dependency>
 			<groupId>gpsUtil</groupId>
 			<artifactId>gpsUtil</artifactId>
@@ -140,7 +137,7 @@
 			<version>3.1.8</version>
 		</dependency>
 
-		<!-- SÉCURITÉ -->
+		<!-- Security -->
 		<dependency>
 			<groupId>com.google.guava</groupId>
 			<artifactId>guava</artifactId>
@@ -180,11 +177,6 @@
 					<forkCount>1</forkCount>
 					<reuseForks>false</reuseForks>
 					<argLine>@{argLine} -Xmx1024m -XX:+EnableDynamicAgentLoading -Djdk.instrument.traceUsage=false</argLine>
-					<!--<includes>
-						<include>**/*Test.java</include>
-						<include>**/*Tests.java</include>
-						<include>**/SimpleValidationTest.java</include>
-					</includes>-->
 					<excludes>
 						<exclude>**/TestPerformance.java</exclude>
 					</excludes>
@@ -196,7 +188,7 @@
 				</configuration>
 			</plugin>
 
-			<!-- JaCoCo Plugin FINAL - sans post-integration-test -->
+			<!-- JaCoCo Plugin -->
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
@@ -218,7 +210,7 @@
 							<goal>report</goal>
 						</goals>
 					</execution>
-					<!-- PAS de post-integration-test ici ! -->
+					<!-- No post-integration-testing -->
 				</executions>
 				<configuration>
 					<excludes>
