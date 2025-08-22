@@ -113,13 +113,13 @@ public class TestTourGuideService {
 		assertEquals(10, providers.size());
 	}
 
-	// ========== NOUVEAUX TESTS POUR AMÉLIORER LA COUVERTURE ==========
+	// NEW TESTS TO IMPROVE COVERAGE RECOMMENDED
 
 	@Test
 	void getUserLocationWithExistingVisitedLocation() {
 		User user = new User(UUID.randomUUID(), "jon", "000", "jon@tourGuide.com");
 
-		// Ajouter une location visitée existante
+		// Add an existing visited rental
 		VisitedLocation existingLocation = new VisitedLocation(
 				user.getUserId(),
 				new Location(33.817595, -117.922008),
@@ -127,7 +127,7 @@ public class TestTourGuideService {
 		);
 		user.addToVisitedLocations(existingLocation);
 
-		// getUserLocation devrait retourner la dernière location visitée
+		// getUserLocation should return the last location visited
 		VisitedLocation result = tourGuideService.getUserLocation(user);
 
 		assertEquals(existingLocation, result);
@@ -143,7 +143,7 @@ public class TestTourGuideService {
 		assertNotNull(nearbyAttractions);
 		assertEquals(5, nearbyAttractions.size());
 
-		// Vérifier que chaque DTO contient les bonnes informations
+		// Check that each DTO contains the correct information
 		for (NearByAttractionDTO attraction : nearbyAttractions) {
 			assertNotNull(attraction.getAttractionName());
 			assertTrue(attraction.getAttractionDistanceInMiles() >= 0);
@@ -159,7 +159,7 @@ public class TestTourGuideService {
 	void getUserRewards() {
 		User user = new User(UUID.randomUUID(), "jon", "000", "jon@tourGuide.com");
 
-		// Ajouter quelques récompenses manuellement pour le test
+		// Add some rewards manually for testing
 		List<Attraction> attractions = gpsUtil.getAttractions();
 		if (!attractions.isEmpty()) {
 			UserReward reward = new UserReward(
@@ -180,7 +180,7 @@ public class TestTourGuideService {
 	void getTripDealsWithUserPreferences() {
 		User user = new User(UUID.randomUUID(), "jon", "000", "jon@tourGuide.com");
 
-		// Définir des préférences utilisateur
+		// Set user preferences
 		UserPreferences preferences = new UserPreferences();
 		preferences.setNumberOfAdults(2);
 		preferences.setNumberOfChildren(1);
@@ -197,13 +197,13 @@ public class TestTourGuideService {
 	@Test
 	void getTripDealsWithNullPreferences() {
 		User user = new User(UUID.randomUUID(), "jon", "000", "jon@tourGuide.com");
-		user.setUserPreferences(null); // Préférences nulles
+		user.setUserPreferences(null); // Null preferences
 
 		List<Provider> providers = tourGuideService.getTripDeals(user);
 
 		assertNotNull(providers);
 		assertEquals(10, providers.size());
-		assertNotNull(user.getUserPreferences()); // Les préférences doivent être initialisées
+		assertNotNull(user.getUserPreferences()); // Preferences must be initialized
 	}
 
 	@Test
@@ -225,9 +225,9 @@ public class TestTourGuideService {
 		List<User> users = List.of(user1, user2);
 
 		CompletableFuture<Void> future = tourGuideService.trackAllUsersLocation(users);
-		future.get(15, TimeUnit.SECONDS); // Attendre la fin
+		future.get(15, TimeUnit.SECONDS); // Wait for the end
 
-		// Vérifier que chaque utilisateur a au moins une location visitée
+		// Check that each user has at least one location visited
         assertFalse(user1.getVisitedLocations().isEmpty());
         assertFalse(user2.getVisitedLocations().isEmpty());
 	}
@@ -242,7 +242,7 @@ public class TestTourGuideService {
 		CompletableFuture<Void> future = tourGuideService.trackUsersLocationInBatches(users, 2);
 		future.get(20, TimeUnit.SECONDS);
 
-		// Vérifier que tous les utilisateurs ont été traités
+		// Check that all users have been processed
         assertFalse(user1.getVisitedLocations().isEmpty());
         assertFalse(user2.getVisitedLocations().isEmpty());
         assertFalse(user3.getVisitedLocations().isEmpty());
@@ -257,28 +257,28 @@ public class TestTourGuideService {
 		CompletableFuture<Void> future = tourGuideService.trackUsersBatch(users);
 		future.get(15, TimeUnit.SECONDS);
 
-		// Vérifier que le batch a été traité
+		// Check that the batch has been processed
         assertFalse(user1.getVisitedLocations().isEmpty());
         assertFalse(user2.getVisitedLocations().isEmpty());
 	}
 
 	@Test
 	void trackAllUsersOptimized() {
-		// Ajouter quelques utilisateurs au service
+		// Add some users to the service
 		User user1 = new User(UUID.randomUUID(), "jon1", "000", "jon1@tourGuide.com");
 		User user2 = new User(UUID.randomUUID(), "jon2", "000", "jon2@tourGuide.com");
 
 		tourGuideService.addUser(user1);
 		tourGuideService.addUser(user2);
 
-		// Mesurer les locations avant
+		// Measure rentals before
 		int initialLocationsUser1 = user1.getVisitedLocations().size();
 		int initialLocationsUser2 = user2.getVisitedLocations().size();
 
-		// Exécuter le tracking optimisé
+		// Run optimized tracking
 		tourGuideService.trackAllUsersOptimized();
 
-		// Vérifier que de nouvelles locations ont été ajoutées
+		// Check that new rentals have been added
 		assertTrue(user1.getVisitedLocations().size() > initialLocationsUser1);
 		assertTrue(user2.getVisitedLocations().size() > initialLocationsUser2);
 	}
@@ -290,10 +290,10 @@ public class TestTourGuideService {
 		tourGuideService.addUser(user);
 		int initialUserCount = tourGuideService.getAllUsers().size();
 
-		// Tenter d'ajouter le même utilisateur
+		// Try to add the same user
 		tourGuideService.addUser(user);
 
-		// Le nombre d'utilisateurs ne doit pas augmenter
+		// The number of users must not increase
 		assertEquals(initialUserCount, tourGuideService.getAllUsers().size());
 	}
 
@@ -312,9 +312,11 @@ public class TestTourGuideService {
 
 		assertEquals(5, attractions.size());
 
-		// Vérifier que les attractions sont triées par distance (plus proche en premier)
-		// Note: nous ne pouvons pas facilement tester l'ordre exact sans connaître la position,
-		// mais nous pouvons vérifier qu'on a bien 5 attractions
+		/*
+		Check that the attractions are sorted by distance (closest first)
+		Note: We can't easily test the exact order without knowing the position,
+		but we can check that we have 5 attractions
+		 */
 		assertTrue(attractions.size() <= 5);
 	}
 
@@ -333,7 +335,7 @@ public class TestTourGuideService {
 		testService.trackUserLocationAsync(user);
 		testService.trackUserLocationAsync(user);
 
-		// Shutdown avec tâches en cours
+		// Shutdown with running tasks
 		assertDoesNotThrow(testService::shutdown);
 	}
 }
