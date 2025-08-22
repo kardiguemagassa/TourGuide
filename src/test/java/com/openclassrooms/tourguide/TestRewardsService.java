@@ -59,13 +59,12 @@ public class TestRewardsService {
 
 		tourGuideService.trackUserLocation(user);
 
-		// SANS Thread.sleep()
 		long timeout = 2000; // 2 secondes max
 		long start = System.currentTimeMillis();
 
 		while (user.getUserRewards().isEmpty()) {
 			if (System.currentTimeMillis() - start > timeout) {
-				fail("Timeout : aucune récompense calculée dans les 2 secondes");
+				fail("Timeout: no reward calculated within 2 seconds");
 			}
 		}
 
@@ -94,10 +93,17 @@ public class TestRewardsService {
 				.until(() -> !user.getUserRewards().isEmpty());
 
 		List<UserReward> userRewards = user.getUserRewards();
-		assertFalse(userRewards.isEmpty(), "L'utilisateur devrait avoir des récompenses");
-		LOGGER.info("Nombre de récompenses trouvées: {}", userRewards.size());
+		assertFalse(userRewards.isEmpty(), "The user should have rewards");
+		LOGGER.info("Number of rewards found: {}", userRewards.size());
 
 		localTourGuideService.shutdown();
+	}
+
+	// NEW TESTS TO IMPROVE COVERAGE RECOMMENDED
+
+	@Test
+	void highVolumeGetRewards() {
+		LOGGER.info("======> Start highVolumeGetRewards with 100 users <=======");
 	}
 
 	@Test
@@ -107,7 +113,7 @@ public class TestRewardsService {
 		// Premier shutdown
 		assertDoesNotThrow(testService::shutdown);
 
-		// Deuxième shutdown (doit être idempotent)
+		// Second shutdown
 		assertDoesNotThrow(testService::shutdown);
 	}
 
@@ -116,14 +122,14 @@ public class TestRewardsService {
 		List<User> users = new ArrayList<>();
 		Attraction attraction = gpsUtil.getAttractions().getFirst();
 
-		// Créer plusieurs utilisateurs avec des locations près de la même attraction
+		// Create multiple users with locations near the same attraction
 		for (int i = 0; i < 5; i++) {
 			User user = new User(UUID.randomUUID(), "concurrentUser" + i, "000", "concurrent" + i + "@test.com");
 			user.addToVisitedLocations(new VisitedLocation(user.getUserId(), attraction, new Date()));
 			users.add(user);
 		}
 
-		// Calculer les récompenses en parallèle
+		// Calculate rewards in parallel
 		List<CompletableFuture<Void>> futures = users.stream()
 				.map(rewardsService::calculateRewardsAsync)
 				.toList();
@@ -134,9 +140,9 @@ public class TestRewardsService {
 
 		allFutures.get(10, TimeUnit.SECONDS);
 
-		// Vérifier que tous les utilisateurs ont des récompenses
+		// Check that all users have rewards
 		for (User user : users) {
-            assertFalse(user.getUserRewards().isEmpty(), "L'utilisateur " + user.getUserName() + " devrait avoir des récompenses");
+            assertFalse(user.getUserRewards().isEmpty(), "The user" + user.getUserName() + " should have rewards");
 		}
 	}
 
