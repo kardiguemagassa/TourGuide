@@ -1,4 +1,4 @@
-// Configuration centralisée optimisée avec SonarQube Jenkins
+// Centralized configuration with DOCKER, NGROK SONARQUBE, NEXUS, NVD, OWASP IN JENKINS
 def config = [
     emailRecipients: "magassakara@gmail.com",
     containerName: "tourguide-app",
@@ -7,12 +7,12 @@ def config = [
     sonarProjectKey: "tourguide",
     // Configuration Nexus
     nexus: [
-        enabled: true, // activer pour utiliser Nexus configuré dans Jenkins
-        configFileId: "maven-settings-nexus", // ID du Config File Provider dans Jenkins
+        enabled: true, // enable to use Nexus configured in Jenkins
+        configFileId: "maven-settings-nexus", // Config File Provider ID in Jenkins
         url: "http://localhost:8081",
         credentialsId: "nexus-credentials"
     ],
-    // Configuration SonarQube (utilise la config Jenkins)
+    // Configuration SonarQube
     sonar: [
         enabled: true,
         installationName: "SonarQube",
@@ -23,7 +23,7 @@ def config = [
         qualityGate: 2,
         deployment: 5,
         sonarAnalysis: 10,
-        owaspCheck: 20 // Augmenté pour OWASP
+        owaspCheck: 20 // Augmented for OWASP
     ],
     ports: [
         master: '8092',
@@ -86,7 +86,7 @@ pipeline {
         stage('Install Local Dependencies') {
             steps {
                 script {
-                    echo "📦 Installation des dépendances locales..."
+                    echo "📦 Installing local dependencies..."
 
                     if (config.nexus.enabled) {
                         installLocalJarsWithNexus(config)
@@ -125,7 +125,7 @@ pipeline {
                     anyOf {
                         branch 'master'
                         branch 'develop'
-                        changeRequest() // ✅ OK - Analyse sur PR
+                        changeRequest() // OK - QUALITY GATE ON PR
                     }
                 }
             }
@@ -143,7 +143,7 @@ pipeline {
                     anyOf {
                         branch 'master'
                         branch 'develop'
-                        changeRequest() // ✅ OK - Quality Gate sur PR
+                        changeRequest() // OK - QUALITY GATE ON PR
                     }
                 }
             }
@@ -178,7 +178,7 @@ pipeline {
                         anyOf {
                             branch 'master'
                             branch 'develop'
-                            changeRequest() // ✅ OK - Sécurité sur PR
+                            changeRequest() // OK - SECURITY ON PR
                         }
                     }
                     steps {
@@ -239,12 +239,12 @@ pipeline {
             }
             steps {
                 script {
-                    // Déploiement avec logique par environnement
+                    // Deployment with logic per environment
                     if (env.BRANCH_NAME == 'master') {
-                        echo "🏭 Déploiement PRODUCTION"
+                        echo "🏭 PRODUCTION DEPLOYMENT"
                         deployToProduction(config)
                     } else if (env.BRANCH_NAME == 'develop') {
-                        echo "🧪 Déploiement STAGING"
+                        echo "🧪 STAGING DEPLOYMENT"
                         deployToStaging(config)
                     }
                 }
@@ -281,7 +281,7 @@ pipeline {
                     }
                     sendEnhancedNotification(config.emailRecipients, config)
                 } catch (Exception e) {
-                    echo "Erreur dans post always: ${e.getMessage()}"
+                    echo "Error in post always: ${e.getMessage()}"
                 } finally {
                     cleanWs()
                 }
@@ -290,19 +290,16 @@ pipeline {
     }
 }
 
-// =============================================================================
-// FONCTIONS DE DÉPLOIEMENT PAR ENVIRONNEMENT
-// =============================================================================
-
+// DEPLOYMENT FEATURES BY ENVIRONMENT
 def deployToProduction(config) {
-    echo "🏭 Déploiement en PRODUCTION (master)"
+    echo "🏭 DEPLOYMENT IN PRODUCTION (master)"
 
-    // Vérifications supplémentaires pour la production
+    // Additional checks for production
     if (currentBuild.result == 'FAILURE') {
-        error "❌ Déploiement production annulé - build en échec"
+        error "❌ Production deployment canceled - build failed"
     }
 
-    // Déploiement production avec configuration spéciale
+    // Production deployment with special configuration
     env.HTTP_PORT = config.ports.master
     env.ENV_NAME = config.environments.master
 
@@ -310,28 +307,25 @@ def deployToProduction(config) {
 }
 
 def deployToStaging(config) {
-    echo "🧪 Déploiement en STAGING (develop)"
+    echo "🧪 DEPLOYMENT IN STAGING (develop)"
 
-    // Déploiement staging
+    // Deployment staging
     env.HTTP_PORT = config.ports.develop
     env.ENV_NAME = config.environments.develop
 
     deployWithDockerComposeJava21Fixed(config)
 }
 
-// =============================================================================
-// FONCTIONS SONARQUBE AVEC CONFIGURATION JENKINS
-// =============================================================================
-
+// SONARQUBE FUNCTIONS WITH JENKINS CONFIGURATION
 def runSonarQubeAnalysisJenkins(config) {
     if (!config.sonar.enabled) {
-        echo "ℹ️ SonarQube désactivé - analyse ignorée"
+        echo "ℹ️ SonarQube disabled - analysis ignored"
         return
     }
 
-    echo "🔍 Analyse SonarQube avec configuration Jenkins..."
+    echo "🔍 SonarQube analysis with Jenkins configuration..."
     try {
-        // Utilisation de withSonarQubeEnv qui utilise la configuration Jenkins
+        // Using withSonarQubeEnv which uses Jenkins configuration
         withSonarQubeEnv(config.sonar.installationName) {
 
             def settingsOption = ""
@@ -346,9 +340,9 @@ def runSonarQubeAnalysisJenkins(config) {
                 runSonarAnalysisWithJenkins(config, "")
             }
         }
-        echo "✅ Analyse SonarQube terminée"
+        echo "✅ SonarQube analysis complete"
     } catch (Exception e) {
-        echo "❌ Erreur lors de l'analyse SonarQube: ${e.getMessage()}"
+        echo "❌ Error while analyzing SonarQube: ${e.getMessage()}"
         currentBuild.result = 'UNSTABLE'
     }
 }
@@ -377,7 +371,7 @@ def runSonarAnalysisWithJenkins(config, String settingsOption) {
 
 def waitForSonarQubeQualityGate(config) {
     try {
-        echo "⏳ Attente du Quality Gate SonarQube..."
+        echo "⏳ Waiting for the SonarQube Quality Gate..."
 
         timeout(time: config.timeouts.qualityGate, unit: 'MINUTES') {
             def qualityGate = waitForQualityGate()
@@ -385,7 +379,7 @@ def waitForSonarQubeQualityGate(config) {
             if (qualityGate.status == 'OK') {
                 echo "✅ Quality Gate: PASSED"
             } else if (qualityGate.status == 'WARN') {
-                echo "⚠️ Quality Gate: WARNING - Continuant le déploiement"
+                echo "⚠️ Quality Gate: WARNING - Continuing the deployment"
                 currentBuild.result = 'UNSTABLE'
             } else {
                 echo "❌ Quality Gate: FAILED"
@@ -393,32 +387,29 @@ def waitForSonarQubeQualityGate(config) {
             }
         }
     } catch (Exception e) {
-        echo "❌ Erreur Quality Gate: ${e.getMessage()}"
+        echo "❌ Quality Gate Error: ${e.getMessage()}"
         currentBuild.result = 'UNSTABLE'
     }
 }
 
-// =============================================================================
-// FONCTIONS BUILD ET MAVEN
-// =============================================================================
-
+// BUILD AND MAVEN FUNCTIONS
 def buildWithNexusJava21(config) {
-    echo "🏗️ Build avec Nexus et Java 21..."
+    echo "🏗️ Build with Nexus and Java 21..."
     configFileProvider([
         configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
     ]) {
         sh """
-            echo "🧹 Nettoyage avec Nexus..."
+            echo "🧹 Cleaning with Nexus..."
             mvn clean -s \$MAVEN_SETTINGS \\
                 -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
                 -B -q
 
-            echo "🏗️ Compilation avec Nexus..."
+            echo "🏗️ Compilation with Nexus..."
             mvn compile -s \$MAVEN_SETTINGS \\
                 -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
                 -B -q
 
-            echo "🧪 Tests avec configuration Java 21..."
+            echo "🧪 Tests with Java 21 configuration..."
             mvn test -s \$MAVEN_SETTINGS \\
                 -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
                 -Dmaven.test.failure.ignore=true \\
@@ -426,7 +417,7 @@ def buildWithNexusJava21(config) {
                 -Dsurefire.forkCount=1 \\
                 -Dsurefire.reuseForks=false \\
                 -DskipITs=true \\
-                -B -q || echo "⚠️ Tests terminés"
+                -B -q || echo "⚠️ Tests completed"
 
             echo "📦 Package avec Nexus..."
             mvn package -s \$MAVEN_SETTINGS \\
@@ -434,17 +425,17 @@ def buildWithNexusJava21(config) {
                 -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
                 -B -q
 
-            echo "✅ Build Nexus terminé"
+            echo "✅ Nexus Build Complete"
         """
     }
 
-    // Vérification des artefacts
+    // Artifact Checking
     sh """
         if [ -f target/*.jar ]; then
-            echo "📦 JAR créé avec Nexus:"
+            echo "📦 JAR created with Nexus:"
             ls -la target/*.jar
         else
-            echo "❌ Aucun JAR trouvé"
+            echo "❌ No JAR found"
             exit 1
         fi
     """
@@ -452,44 +443,44 @@ def buildWithNexusJava21(config) {
 
 def buildWithCleanTestsJava21() {
     sh """
-        echo "🧹 Nettoyage complet avant build..."
+        echo "🧹 Complete cleaning before build..."
         mvn clean -Dmaven.repo.local=\${WORKSPACE}/.m2/repository -B -q
 
         echo "🏗️ Compilation..."
         mvn compile -Dmaven.repo.local=\${WORKSPACE}/.m2/repository -B -q
 
-        echo "🧪 Tests avec configuration Java 21..."
+        echo "🧪 Tests with Java 21 configuration..."
         mvn test -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
             -Dmaven.test.failure.ignore=true \\
             -Dsurefire.useSystemClassLoader=false \\
             -Dsurefire.forkCount=1 \\
             -Dsurefire.reuseForks=false \\
             -DskipITs=true \\
-            -B -q || echo "⚠️ Tests terminés"
+            -B -q || echo "⚠️ Tests completed"
 
         echo "📦 Package..."
         mvn package -DskipTests=true \\
             -Dmaven.repo.local=\${WORKSPACE}/.m2/repository -B -q
 
-        echo "✅ Build terminé"
+        echo "✅ Build completed"
 
         if [ -f target/*.jar ]; then
             echo "📦 JAR créé:"
             ls -la target/*.jar
         else
-            echo "❌ Aucun JAR trouvé"
+            echo "❌ No JAR found"
             exit 1
         fi
     """
 }
 
 def installLocalJarsWithNexus(config) {
-    echo "📦 Installation des JARs locaux avec Nexus..."
+    echo "📦 Installing local JARs with Nexus..."
     configFileProvider([
         configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
     ]) {
         sh """
-            echo "📦 Installation des JARs locaux avec settings Nexus..."
+            echo "📦 Installing local JARs with Nexus settings..."
 
             for jar in gpsUtil TripPricer rewardCentral; do
                 if [ -f "libs/\${jar}.jar" ]; then
@@ -501,9 +492,9 @@ def installLocalJarsWithNexus(config) {
                         -Dpackaging=jar \\
                         -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
                         -B -q
-                    echo "✅ \${jar}.jar installé avec Nexus"
+                    echo "✅ \${jar}.jar installed with Nexus"
                 else
-                    echo "⚠️ \${jar}.jar non trouvé"
+                    echo "⚠️ \${jar}.jar not found"
                 fi
             done
         """
@@ -512,7 +503,7 @@ def installLocalJarsWithNexus(config) {
 
 def installLocalJars() {
     sh """
-        echo "📦 Installation des JARs locaux..."
+        echo "📦 Installing local JARs..."
 
         for jar in gpsUtil TripPricer rewardCentral; do
             if [ -f "libs/\${jar}.jar" ]; then
@@ -524,21 +515,18 @@ def installLocalJars() {
                     -Dpackaging=jar \\
                     -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
                     -B -q
-                echo "✅ \${jar}.jar installé"
+                echo "✅ \${jar}.jar installed"
             else
-                echo "⚠️ \${jar}.jar non trouvé"
+                echo "⚠️ \${jar}.jar not found"
             fi
         done
     """
 }
 
-// =============================================================================
-// FONCTIONS DOCKER
-// =============================================================================
-
+// DOCKER FUNCTIONS
 def buildDockerImageJava21Fixed(config) {
     try {
-        echo "🐳 Construction image Docker Java 21..."
+        echo "🐳 Building Docker Java 21 image..."
 
         def imageName = "${config.containerName}:${env.CONTAINER_TAG}"
         def jarFiles = findFiles(glob: 'target/*.jar').findAll {
@@ -546,7 +534,7 @@ def buildDockerImageJava21Fixed(config) {
         }
 
         def jarFile = jarFiles[0].path
-        echo "📦 JAR utilisé: ${jarFile}"
+        echo "📦 JAR used: ${jarFile}"
 
         if (!fileExists('Dockerfile')) {
             createDockerfileJava21()
@@ -565,23 +553,23 @@ def buildDockerImageJava21Fixed(config) {
         """
 
         sh "docker images ${imageName}"
-        echo "✅ Image Docker Java 21 construite: ${imageName}"
+        echo "✅ Built Java 21 Docker Image: ${imageName}"
 
     } catch (Exception e) {
-        error "❌ Échec construction Docker: ${e.getMessage()}"
+        error "❌ Docker build failed: ${e.getMessage()}"
     }
 }
 
 def createDockerfileJava21() {
     sh """
         cat > Dockerfile << 'EOF'
-FROM eclipse-temurin:21-jre-alpine
+        FROM eclipse-temurin:21-jre-alpine
 
-# Installation des outils
+        # Installing the tools
 RUN apk --no-cache add curl bash && \\
     rm -rf /var/cache/apk/*
 
-# Utilisateur non-root
+# Non-root user
 RUN addgroup -g 1000 -S spring && \\
     adduser -u 1000 -S spring -G spring
 
@@ -589,7 +577,7 @@ WORKDIR /opt/app
 RUN mkdir -p logs config data && \\
     chown -R spring:spring /opt/app
 
-# Copie du JAR
+# Copy of the JAR
 ARG JAR_FILE=target/*.jar
 COPY --chown=spring:spring \${JAR_FILE} app.jar
 
@@ -600,7 +588,7 @@ RUN if [ -f entrypoint.sh ]; then chmod +x entrypoint.sh; fi
 USER spring
 EXPOSE 8080 8090 8091 8092
 
-# Variables d'environnement Java 21
+# Java 21 Environment Variables
 ENV JAVA_OPTS=""
 ENV SERVER_PORT=8090
 ENV SPRING_PROFILES_ACTIVE=dev
@@ -609,16 +597,16 @@ ENV SPRING_PROFILES_ACTIVE=dev
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \\
     CMD curl -f http://localhost:\${SERVER_PORT}/actuator/health || exit 1
 
-# Point d'entrée compatible Java 21
+# Java 21 compatible entry point
 ENTRYPOINT ["sh", "-c", "java \$JAVA_OPTS -jar app.jar"]
 EOF
     """
-    echo "✅ Dockerfile Java 21 créé"
+    echo "✅ Java 21 Dockerfile created"
 }
 
 def deployWithDockerComposeJava21Fixed(appConfig) {
     try {
-        echo "🐳 Déploiement Docker Compose Java 21..."
+        echo "🐳 Docker Compose Java 21 Deployment..."
 
         if (!fileExists('docker-compose.yml')) {
             createDockerComposeJava21(appConfig)
@@ -627,24 +615,24 @@ def deployWithDockerComposeJava21Fixed(appConfig) {
         createEnvFileJava21(appConfig)
 
         sh """
-            # Nettoyage
+            # Cleaning
             docker ps -a --filter "name=tourguide" --format "{{.Names}}" | xargs docker rm -f 2>/dev/null || true
             docker-compose down --remove-orphans 2>/dev/null || true
             sleep 2
 
-            # Variables d'environnement Java 21
+            # Java 21 Environment Variables
             export HTTP_PORT=${env.HTTP_PORT}
             export IMAGE_NAME=${appConfig.containerName}:${env.CONTAINER_TAG}
             export SPRING_PROFILES_ACTIVE=${env.ENV_NAME}
             export JAVA_OPTS="-Xmx512m -Xms256m"
 
-            echo "📋 Configuration Docker Compose:"
+            echo "📋 Docker Compose Configuration:"
             echo "HTTP_PORT=\$HTTP_PORT"
             echo "IMAGE_NAME=\$IMAGE_NAME"
             echo "SPRING_PROFILES_ACTIVE=\$SPRING_PROFILES_ACTIVE"
             echo "JAVA_OPTS=\$JAVA_OPTS"
 
-            # Démarrage
+            # Startup
             docker-compose up -d --force-recreate
         """
 
@@ -657,83 +645,80 @@ def deployWithDockerComposeJava21Fixed(appConfig) {
             docker-compose logs --tail 30 ${appConfig.serviceName}
         """
 
-        echo "✅ Application déployée sur: http://localhost:${env.HTTP_PORT}"
+        echo "✅ Application deployed on: http://localhost:${env.HTTP_PORT}"
 
     } catch (Exception e) {
-        error "❌ Échec déploiement: ${e.getMessage()}"
+        error "❌ Deployment failure: ${e.getMessage()}"
     }
 }
 
 def createDockerComposeJava21(appConfig) {
     sh """
         cat > docker-compose.yml << 'EOF'
-version: '3.8'
-services:
-  ${appConfig.serviceName}:
-    image: \${IMAGE_NAME:-${appConfig.containerName}:latest}
-    container_name: ${appConfig.containerName}-\${BUILD_NUMBER:-dev}
-    ports:
-      - "\${HTTP_PORT:-8090}:\${HTTP_PORT:-8090}"
-    environment:
-      - SERVER_PORT=\${HTTP_PORT:-8090}
-      - SPRING_PROFILES_ACTIVE=\${SPRING_PROFILES_ACTIVE:-dev}
-      - JAVA_OPTS=\${JAVA_OPTS:--Xmx512m -Xms256m}
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:\${HTTP_PORT:-8090}/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
-    networks:
-      - tourguide-network
+        version: '3.8'
+        services:
+        ${appConfig.serviceName}:
+        image: \${IMAGE_NAME:-${appConfig.containerName}:latest}
+        container_name: ${appConfig.containerName}-\${BUILD_NUMBER:-dev}
+        ports:
+            - "\${HTTP_PORT:-8090}:\${HTTP_PORT:-8090}"
+        environment:
+            - SERVER_PORT=\${HTTP_PORT:-8090}
+            - SPRING_PROFILES_ACTIVE=\${SPRING_PROFILES_ACTIVE:-dev}
+            - JAVA_OPTS=\${JAVA_OPTS:--Xmx512m -Xms256m}
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:\${HTTP_PORT:-8090}/actuator/health"]
+            interval: 30s
+            timeout: 10s
+            retries: 5
+            start_period: 60s
+            networks:
+            - tourguide-network
 
-networks:
-  tourguide-network:
-    driver: bridge
-EOF
+        networks:
+        tourguide-network:
+        driver: bridge
+        EOF
     """
-    echo "✅ Docker Compose Java 21 créé"
+    echo "✅ Docker Compose Java 21 created"
 }
 
 def createEnvFileJava21(appConfig) {
     sh """
         cat > .env << 'EOF'
-# Configuration Java 21 - Build #${env.BUILD_NUMBER}
-HTTP_PORT=${env.HTTP_PORT}
-IMAGE_NAME=${appConfig.containerName}:${env.CONTAINER_TAG}
-SPRING_PROFILES_ACTIVE=${env.ENV_NAME}
-BUILD_NUMBER=${env.BUILD_NUMBER}
-JAVA_OPTS=-Xmx512m -Xms256m
-EOF
+        # Configuration Java 21 - Build #${env.BUILD_NUMBER}
+        HTTP_PORT=${env.HTTP_PORT}
+        IMAGE_NAME=${appConfig.containerName}:${env.CONTAINER_TAG}
+        SPRING_PROFILES_ACTIVE=${env.ENV_NAME}
+        BUILD_NUMBER=${env.BUILD_NUMBER}
+        JAVA_OPTS=-Xmx512m -Xms256m
+        EOF
     """
-    echo "✅ Fichier .env Java 21 créé"
+    echo "✅ Java 21 .env file created"
 }
 
-// =============================================================================
-// FONCTIONS NEXUS
-// =============================================================================
-
+// NEXUS FUNCTIONS
 def validateNexusConfiguration(config) {
-    echo "🔍 Validation de la configuration Nexus..."
+    echo "🔍 Validating the Nexus configuration..."
     try {
         configFileProvider([
             configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
         ]) {
             sh '''
-                echo "📋 Contenu du settings.xml Nexus:"
+                echo "📋 Contents of Nexus settings.xml:"
                 if [ -f "$MAVEN_SETTINGS" ]; then
-                    echo "✅ Fichier settings.xml trouvé: $MAVEN_SETTINGS"
+                    echo "✅ Settings.xml file found: $MAVEN_SETTINGS"
                     if grep -q "nexus" "$MAVEN_SETTINGS"; then
-                        echo "✅ Configuration Nexus trouvée dans settings.xml"
-                        echo "📋 Repositories configurés:"
+                        echo "✅ Nexus configuration found in settings.xml"
+                        echo "📋 Configured repositories:"
                         grep -A5 -B1 "repository>" "$MAVEN_SETTINGS" || true
                     else
-                        echo "❌ Configuration Nexus manquante dans settings.xml"
+                        echo "❌ Missing Nexus configuration in settings.xml"
                         exit 1
                     fi
                 else
-                    echo "❌ Fichier settings.xml non trouvé: $MAVEN_SETTINGS"
+                    echo "❌ Settings.xml file not found: $MAVEN_SETTINGS"
                     exit 1
                 fi
             '''
@@ -745,29 +730,29 @@ def validateNexusConfiguration(config) {
         ).trim()
 
         if (nexusStatus == "200") {
-            echo "✅ Nexus accessible sur ${config.nexus.url}"
+            echo "✅ Nexus accessible on ${config.nexus.url}"
         } else {
-            echo "⚠️ Nexus non accessible (HTTP: ${nexusStatus}) - continuant en mode dégradé"
+            echo "⚠️ Nexus not accessible (HTTP: ${nexusStatus}) - continuing in degraded mode"
         }
     } catch (Exception e) {
-        echo "❌ Erreur de configuration Nexus: ${e.getMessage()}"
-        echo "⚠️ Continuant sans Nexus"
+        echo "❌ Nexus configuration error: ${e.getMessage()}"
+        echo "⚠️ Continuing without Nexus"
     }
 }
 
 def deployToNexusRepository(config) {
     if (!config.nexus.enabled) {
-        echo "ℹ️ Nexus désactivé - déploiement ignoré"
+        echo "ℹ️ Nexus disabled - deployment ignored"
         return
     }
 
-    echo "📤 Déploiement vers Nexus Repository..."
+    echo "📤 Deploying to Nexus Repository..."
     try {
         configFileProvider([
             configFile(fileId: config.nexus.configFileId, variable: 'MAVEN_SETTINGS')
         ]) {
             sh """
-                echo "📤 Déploiement vers Nexus avec settings: \$MAVEN_SETTINGS"
+                echo "📤 Deploying to Nexus with settings: \$MAVEN_SETTINGS"
                 mvn deploy -s \$MAVEN_SETTINGS \\
                     -DskipTests=true \\
                     -Dmaven.repo.local=\${WORKSPACE}/.m2/repository \\
@@ -775,20 +760,17 @@ def deployToNexusRepository(config) {
                     -B -q
             """
         }
-        echo "✅ Artefact déployé avec succès vers Nexus"
+        echo "✅ Artifact successfully deployed to Nexus"
     } catch (Exception e) {
-        echo "❌ Erreur lors du déploiement vers Nexus: ${e.getMessage()}"
+        echo "❌ Error deploying to Nexus: ${e.getMessage()}"
         currentBuild.result = 'UNSTABLE'
     }
 }
 
-// =============================================================================
-// FONCTIONS OWASP ET SÉCURITÉ
-// =============================================================================
-
+// OWASP FEATURES AND SECURITY
 def runOwaspDependencyCheckSimple(config) {
     try {
-        echo "🛡️ OWASP Dependency Check simplifié..."
+        echo "🛡️ OWASP Dependency Check simplified..."
 
         def settingsOption = ""
         if (config.nexus.enabled) {
@@ -803,7 +785,7 @@ def runOwaspDependencyCheckSimple(config) {
         }
 
     } catch (Exception e) {
-        echo "🚨 Erreur OWASP: ${e.getMessage()}"
+        echo "🚨 OWASP Error: ${e.getMessage()}"
         createOwaspErrorReport(e)
         currentBuild.result = 'UNSTABLE'
     }
@@ -833,9 +815,9 @@ def runOwaspWithSettings(String settingsOption) {
         """, returnStatus: true)
 
         if (exitCode == 0) {
-            echo "✅ OWASP: Analyse terminée avec succès"
+            echo "✅ OWASP: Analysis completed successfully"
         } else {
-            echo "⚠️ OWASP: Analyse avec avertissements (code: ${exitCode})"
+            echo "⚠️ OWASP: Analysis with warnings (code: ${exitCode})"
             currentBuild.result = 'UNSTABLE'
         }
     }
@@ -843,7 +825,7 @@ def runOwaspWithSettings(String settingsOption) {
 
 def runMavenSecurityAudit(config) {
     try {
-        echo "🔍 Audit Maven des dépendances..."
+        echo "🔍 Maven Dependency Audit..."
 
         def settingsOption = ""
         if (config.nexus.enabled) {
@@ -870,11 +852,11 @@ def runAuditWithSettings(String settingsOption) {
                 -B -q
         """
     }
-    echo "✅ Audit Maven terminé"
+    echo "✅ Maven Audit Completed"
 }
 
 def publishTestAndCoverageResultsFixed() {
-    echo "📊 Publication des résultats de tests et couverture..."
+    echo "📊 Publication of test results and coverage..."
 
     try {
         def testReportPaths = [
@@ -892,7 +874,7 @@ def publishTestAndCoverageResultsFixed() {
                         returnStdout: true
                     ).trim().toInteger()
 
-                    echo "🔍 Pattern '${pattern}': ${fileCount} fichiers trouvés"
+                    echo "🔍 Pattern '${pattern}': ${fileCount} files found"
 
                     if (fileCount > 0) {
                         testFilesFound = true
@@ -904,36 +886,36 @@ def publishTestAndCoverageResultsFixed() {
                                 keepLongStdio: true,
                                 skipPublishingChecks: true
                             )
-                            echo "✅ Tests publiés avec junit() - Pattern: ${pattern}"
+                            echo "✅ Tests published with junit() - Pattern: ${pattern}"
                         } catch (Exception junitError) {
-                            echo "⚠️ junit() échoué: ${junitError.getMessage()}"
+                            echo "⚠️ junit() failed: ${junitError.getMessage()}"
                             archiveArtifacts(
                                 artifacts: pattern,
                                 allowEmptyArchive: true,
                                 fingerprint: false
                             )
-                            echo "✅ Fichiers de tests archivés"
+                            echo "✅ Archived test files"
                         }
                     }
                 } catch (Exception e) {
-                    echo "⚠️ Erreur avec pattern ${pattern}: ${e.getMessage()}"
+                    echo "⚠️ Error with pattern ${pattern}: ${e.getMessage()}"
                 }
             }
         }
 
         if (!testFilesFound) {
-            echo "⚠️ Aucun fichier de test XML trouvé"
+            echo "⚠️ No XML test file found"
         }
 
         publishJacocoReportsFixed()
 
     } catch (Exception globalError) {
-        echo "❌ Erreur globale publication: ${globalError.getMessage()}"
+        echo "❌ Global publication error: ${globalError.getMessage()}"
     }
 }
 
 def publishJacocoReportsFixed() {
-    echo "📊 Publication JaCoCo..."
+    echo "📊 JaCoCo Publication..."
 
     try {
         if (fileExists('target/site/jacoco/index.html')) {
@@ -946,12 +928,12 @@ def publishJacocoReportsFixed() {
                     reportFiles: 'index.html',
                     reportName: 'JaCoCo Coverage Report'
                 ])
-                echo "✅ Rapport JaCoCo HTML publié"
+                echo "✅ JaCoCo HTML Report Published"
             } catch (Exception htmlError) {
-                echo "⚠️ Erreur publication HTML JaCoCo: ${htmlError.getMessage()}"
+                echo "⚠️ JaCoCo HTML publication error: ${htmlError.getMessage()}"
             }
         } else {
-            echo "⚠️ Pas de rapport HTML JaCoCo"
+            echo "⚠️ No HTML report JaCoCo"
         }
 
         if (fileExists('target/jacoco.exec')) {
@@ -968,21 +950,21 @@ def publishJacocoReportsFixed() {
                     minimumLineCoverage: '0',
                     minimumMethodCoverage: '0'
                 )
-                echo "✅ Métriques JaCoCo publiées"
+                echo "✅ JaCoCo metrics published"
             } catch (Exception jacocoError) {
-                echo "⚠️ Erreur métriques JaCoCo: ${jacocoError.getMessage()}"
+                echo "⚠️ JaCoCo Metric Error: ${jacocoError.getMessage()}"
             }
         } else {
-            echo "⚠️ Pas de fichier jacoco.exec"
+            echo "⚠️ No jacoco.exec file"
         }
 
     } catch (Exception jacocoGlobalError) {
-        echo "❌ Erreur globale JaCoCo: ${jacocoGlobalError.getMessage()}"
+        echo "❌ JaCoCo global error: ${jacocoGlobalError.getMessage()}"
     }
 }
 
 def archiveOwaspReports() {
-    echo "📋 Archivage des rapports OWASP..."
+    echo "📋 Archiving OWASP reports..."
 
     try {
         def reportFiles = [
@@ -994,12 +976,12 @@ def archiveOwaspReports() {
         reportFiles.each { report ->
             if (fileExists("target/${report}")) {
                 archiveArtifacts artifacts: "target/${report}", allowEmptyArchive: true
-                echo "✅ Rapport ${report} archivé"
+                echo "✅ Report ${report} archive"
                 reportsFound = true
             }
         }
 
-        // Publication du rapport HTML
+        // Publication of the HTML report
         if (fileExists('target/dependency-check-report.html')) {
             try {
                 publishHTML([
@@ -1010,20 +992,20 @@ def archiveOwaspReports() {
                     reportFiles: 'dependency-check-report.html',
                     reportName: 'OWASP Security Report'
                 ])
-                echo "✅ Rapport OWASP HTML publié"
+                echo "✅ OWASP HTML Report Published"
             } catch (Exception htmlError) {
-                echo "⚠️ Erreur publication HTML OWASP: ${htmlError.getMessage()}"
+                echo "⚠️ OWASP HTML publishing error: ${htmlError.getMessage()}"
             }
         } else {
-            echo "⚠️ Aucun rapport OWASP HTML trouvé"
+            echo "⚠️ No OWASP HTML reports found"
         }
 
         if (!reportsFound) {
-            echo "⚠️ Aucun rapport OWASP généré"
+            echo "⚠️ No OWASP report generated"
         }
 
     } catch (Exception e) {
-        echo "❌ Erreur archivage OWASP: ${e.getMessage()}"
+        echo "❌ OWASP archiving error: ${e.getMessage()}"
     }
 }
 
@@ -1034,7 +1016,7 @@ def createOwaspErrorReport(Exception e) {
 <!DOCTYPE html>
 <html>
 <head>
-    <title>OWASP Dependency Check - Erreur</title>
+    <title>OWASP Dependency Check - Error</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 40px; }
         .error { color: #d32f2f; background: #ffebee; padding: 20px; border-radius: 4px; }
@@ -1043,10 +1025,10 @@ def createOwaspErrorReport(Exception e) {
 <body>
     <h1>🛡️ OWASP Dependency Check - TourGuide</h1>
     <div class="error">
-        <h2>⚠️ Scan de sécurité indisponible</h2>
-        <p><strong>Erreur:</strong> ${e.getMessage()}</p>
+        <h2>⚠️ Security scan unavailable</h2>
+        <p><strong>Error:</strong> ${e.getMessage()}</p>
         <p><strong>Build:</strong> #${env.BUILD_NUMBER}</p>
-        <p><strong>Branche:</strong> ${env.BRANCH_NAME}</p>
+        <p><strong>Branch:</strong> ${env.BRANCH_NAME}</p>
     </div>
 </body>
 </html>
@@ -1056,7 +1038,7 @@ EOF
 
 def checkDockerAvailability() {
     try {
-        echo "🐳 Vérification de Docker..."
+        echo "🐳 Checking Docker..."
 
         def dockerPaths = ['/usr/local/bin/docker', '/usr/bin/docker', 'docker']
         def dockerFound = false
@@ -1068,16 +1050,16 @@ def checkDockerAvailability() {
                 if (result != 'not-found' && result != '') {
                     dockerFound = true
                     dockerPath = result
-                    echo "✅ Docker trouvé à: ${dockerPath}"
+                    echo "✅ Docker found at: ${dockerPath}"
                     break
                 }
             } catch (Exception e) {
-                // Continuer la recherche
+                // Continue searching
             }
         }
 
         if (!dockerFound) {
-            echo "❌ Docker non trouvé"
+            echo "❌ Docker not found"
             return "false"
         }
 
@@ -1086,41 +1068,41 @@ def checkDockerAvailability() {
             def daemonCheck = sh(script: "${dockerPath} info >/dev/null 2>&1", returnStatus: true)
 
             if (daemonCheck == 0) {
-                echo "✅ Docker daemon actif"
+                echo "✅ Docker daemon active"
 
                 def composeCheck = sh(script: "docker-compose --version", returnStatus: true)
                 if (composeCheck == 0) {
-                    echo "✅ Docker Compose disponible"
+                    echo "✅ Docker Compose available"
                     return "true"
                 } else {
-                    echo "⚠️ Docker Compose non disponible"
+                    echo "⚠️ Docker Compose not available"
                     return "false"
                 }
             } else {
-                echo "❌ Docker daemon non actif"
+                echo "❌ Docker daemon not active"
                 return "false"
             }
         } catch (Exception e) {
-            echo "❌ Erreur vérification Docker: ${e.getMessage()}"
+            echo "❌ Docker verification error: ${e.getMessage()}"
             return "false"
         }
 
     } catch (Exception e) {
-        echo "❌ Erreur vérification Docker: ${e.getMessage()}"
+        echo "❌ Docker verification error: ${e.getMessage()}"
         return "false"
     }
 }
 
 def validateEnvironment() {
-    echo "🔍 Validation de l'environnement..."
+    echo "🔍 Validation of the environment..."
     sh "java -version"
     sh "mvn -version"
-    sh "df -h . | tail -1 | awk '{print \"💾 Espace disque: \" \$4 \" disponible\"}'"
+    sh "df -h . | tail -1 | awk '{print \"💾 Disk space: \" \$4 \" available\"}'"
 }
 
 def validateDockerPrerequisites() {
     if (env.DOCKER_AVAILABLE != "true") {
-        error "🐳 Docker non disponible"
+        error "🐳 Docker not available"
     }
 
     def jarFiles = findFiles(glob: 'target/*.jar').findAll {
@@ -1128,10 +1110,10 @@ def validateDockerPrerequisites() {
     }
 
     if (jarFiles.length == 0) {
-        error "📦 Aucun JAR exécutable trouvé"
+        error "📦 No executable JAR found"
     }
 
-    echo "📦 JAR trouvé: ${jarFiles[0].path}"
+    echo "📦 JAR found: ${jarFiles[0].path}"
 }
 
 def performHealthCheck(config) {
@@ -1146,10 +1128,10 @@ def performHealthCheck(config) {
                         returnStatus: true
                     )
                     if (healthCheck == 0) {
-                        echo "✅ Application répond correctement"
+                        echo "✅ Application responds correctly"
                         return true
                     } else {
-                        echo "⏳ Application pas encore prête..."
+                        echo "⏳ Application not ready yet..."
                         sleep(5)
                         return false
                     }
@@ -1157,70 +1139,70 @@ def performHealthCheck(config) {
             }
         }
 
-        echo "✅ Health check réussi"
+        echo "✅ Health check successful"
 
     } catch (Exception e) {
         sh "docker-compose logs ${config.serviceName} --tail 50 || true"
-        error "❌ Health check échoué: ${e.getMessage()}"
+        error "❌ Health check failed: ${e.getMessage()}"
     }
 }
 
 def cleanupDockerImages(config) {
     try {
-        echo "🧹 Nettoyage Docker..."
+        echo "🧹 Docker cleaning..."
         sh """
             docker-compose down --remove-orphans || true
             docker image prune -f --filter "until=24h" || true
             docker container prune -f || true
             docker volume prune -f || true
-            docker network prune -f || true  # ← AJOUT
+            docker network prune -f || true  # ← ADD
         """
-        echo "✅ Nettoyage Docker terminé"
+        echo "✅ Docker cleanup complete"
     } catch (Exception e) {
-        echo "⚠️ Erreur nettoyage Docker: ${e.getMessage()}"
+        echo "⚠️ Docker cleanup error: ${e.getMessage()}"
     }
 }
 
 def displayBuildInfo(config) {
     echo """
     ================================================================================
-                  🚀 CONFIGURATION BUILD TOURGUIDE AVEC NEXUS + SONARQUBE
+                  🚀 CONFIGURATION BUILD TOURGUIDE WITH NEXUS + SONARQUBE
     ================================================================================
      Build #: ${env.BUILD_NUMBER}
      Branch: ${env.BRANCH_NAME}
      Environment: ${env.ENV_NAME}
      Port externe: ${env.HTTP_PORT}
-     Java: 21 (Options corrigées)
-     Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Disponible" : "⚠️ Indisponible"}
+     Java: 21
+     Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Available" : "⚠️ Unavailable"}
      Tag: ${env.CONTAINER_TAG}
      Service: ${config.serviceName}
 
-     🔧 Configuration des ports:
+     🔧 Port Configuration:
      • dev (default) : 8090
      • uat (develop) : 8091
      • prod (master) : 8092
 
      ⚙️ NEXUS STATUS:
-     • Activé: ${config.nexus.enabled ? "✅" : "❌"}
+     • Activated: ${config.nexus.enabled ? "✅" : "❌"}
      ${config.nexus.enabled ? "• URL: ${config.nexus.url}" : "• Mode: Standard Maven"}
      ${config.nexus.enabled ? "• Config File: ${config.nexus.configFileId}" : ""}
 
      🔍 SONARQUBE STATUS:
-     • Activé: ${config.sonar.enabled ? "✅" : "❌"}
-     ${config.sonar.enabled ? "• Installation: ${config.sonar.installationName}" : "• Mode: Sans analyse"}
+     • Activated: ${config.sonar.enabled ? "✅" : "❌"}
+     ${config.sonar.enabled ? "• Installation: ${config.sonar.installationName}" : "• Mode: Without analysis"}
      ${config.sonar.enabled ? "• Project Key: ${config.sonar.projectKey}" : ""}
-     ${config.sonar.enabled ? "• Quality Gate: Activé" : ""}
+     ${config.sonar.enabled ? "• Quality Gate: Activated" : ""}
 
      🛡️ SECURITY:
-     • OWASP: Mode simplifié avec Nexus
+     • OWASP: Easy mode with Nexus
      • Coverage: JaCoCo standard
      • Tests: Configuration Java 21
-     • SonarQube: ${config.sonar.enabled ? "Analyse via Jenkins" : "Désactivé"}
+     • SonarQube: ${config.sonar.enabled ? "Analyse via Jenkins" : "Disabled"}
 
      🐳 DOCKER:
      • Compose: Configuration Java 21
-     • Health Check: Automatique
-     • JVM Options: Corrigées pour Java 21
+     • Health Check: Automatic
+     • JVM Options: Java 21
     ================================================================================
     """
 }
@@ -1237,9 +1219,9 @@ def sendEnhancedNotification(recipients, config) {
             nexusInfo = """
         📦 NEXUS REPOSITORY:
         • URL: ${config.nexus.url}
-        • Configuré: ✅ Via Config File Provider
+        • Configured: ✅ Via Config File Provider
         • Config ID: ${config.nexus.configFileId}
-        • Artefact déployé: ${status == 'SUCCESS' ? '✅' : '⚠️'}
+        • Artefact deployed: ${status == 'SUCCESS' ? '✅' : '⚠️'}
         """
         }
 
@@ -1257,11 +1239,11 @@ def sendEnhancedNotification(recipients, config) {
         def deploymentInfo = ""
         if (env.DOCKER_AVAILABLE == "true" && (status == 'SUCCESS' || status == 'UNSTABLE')) {
             deploymentInfo = """
-        🚀 DÉPLOIEMENT JAVA 21:
+        🚀 JAVA 21 DEPLOYMENT:
         • Application: http://localhost:${env.HTTP_PORT}
         • Health Check: http://localhost:${env.HTTP_PORT}/actuator/health
-        • Environnement: ${env.ENV_NAME}
-        • JVM Options: Corrigées pour Java 21
+        • Environment: ${env.ENV_NAME}
+        • JVM Options: Fixed for Java 21
 
         📊 RAPPORTS:
         • Tests: ${env.BUILD_URL}testReport/
@@ -1272,18 +1254,18 @@ def sendEnhancedNotification(recipients, config) {
         }
 
         def body = """
-        ${statusIcon} BUILD ${status} - TourGuide avec Java 21 ${config.nexus.enabled ? '+ Nexus' : ''} ${config.sonar.enabled ? '+ SonarQube' : ''}
+        ${statusIcon} BUILD ${status} - TourGuide with Java 21 ${config.nexus.enabled ? '+ Nexus' : ''} ${config.sonar.enabled ? '+ SonarQube' : ''}
 
         📋 DÉTAILS:
         • Build: #${env.BUILD_NUMBER}
-        • Branche: ${env.BRANCH_NAME}
-        • Environnement: ${env.ENV_NAME}
+        • Branch: ${env.BRANCH_NAME}
+        • Environment: ${env.ENV_NAME}
         • Port: ${env.HTTP_PORT}
-        • Java: 21 (Options JVM corrigées)
+        • Java: 21
         • Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅" : "❌"}
         • Nexus: ${config.nexus.enabled ? "✅" : "❌"}
         • SonarQube: ${config.sonar.enabled ? "✅" : "❌"}
-        • Durée: ${currentBuild.durationString ?: 'N/A'}
+        • Duration: ${currentBuild.durationString ?: 'N/A'}
 
         ${nexusInfo}
         ${sonarInfo}
@@ -1299,17 +1281,14 @@ def sendEnhancedNotification(recipients, config) {
         """
 
         mail(to: recipients, subject: subject, body: body, mimeType: 'text/plain')
-        echo "📧 Notification envoyée à: ${recipients}"
+        echo "📧 Notification sent to: ${recipients}"
 
     } catch (Exception e) {
-        echo "❌ Erreur notification: ${e.getMessage()}"
+        echo "❌ Error notification: ${e.getMessage()}"
     }
 }
 
-// =============================================================================
-// FONCTIONS UTILITAIRES POUR LA CONFIGURATION
-// =============================================================================
-
+// UTILITY FUNCTIONS FOR CONFIGURATION
 String getEnvName(String branchName, Map environments) {
     def branch = branchName?.toLowerCase()
     return environments[branch] ?: environments.default
