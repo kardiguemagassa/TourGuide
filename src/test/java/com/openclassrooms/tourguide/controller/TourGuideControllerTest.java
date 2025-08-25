@@ -10,6 +10,8 @@ import gpsUtil.location.Location;
 import gpsUtil.location.VisitedLocation;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.MediaType;
@@ -18,6 +20,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import tripPricer.Provider;
 
 import java.util.*;
+import java.util.stream.Stream;
 
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -39,6 +42,10 @@ class TourGuideControllerTest {
     private List<Attraction> testAttractions;
     private List<UserReward> testRewards;
     private List<Provider> testProviders;
+
+    // Constantes pour le test paramétrisé
+    private static final String INVALID_USER = "invalidUser";
+    private static final String USER_PARAM = "userName";
 
     @BeforeEach
     void setUp() {
@@ -138,17 +145,6 @@ class TourGuideControllerTest {
                 .andDo(result -> System.out.println("Response: " + result.getResponse().getContentAsString()));
     }
 
-    @Test
-    void getUserProfile_WithInvalidUser_ShouldReturnNotFound() throws Exception {
-        // Given
-        when(tourGuideService.getUser("invalidUser")).thenThrow(new RuntimeException("User not found"));
-
-        // When & Then
-        mockMvc.perform(get("/users/profile")
-                        .param("userName", "invalidUser"))
-                .andExpect(status().isNotFound());
-    }
-
     // Tests for @GetMapping("/location") - getUserLocation()
     @Test
     void getUserLocation_WithValidUser_ShouldReturnLocation() throws Exception {
@@ -164,17 +160,6 @@ class TourGuideControllerTest {
                 .andExpect(jsonPath("$.userId").exists())
                 .andExpect(jsonPath("$.location.latitude").value(33.817595))
                 .andExpect(jsonPath("$.location.longitude").value(-117.922008));
-    }
-
-    @Test
-    void getUserLocation_WithInvalidUser_ShouldReturnNotFound() throws Exception {
-        // Given
-        when(tourGuideService.getUser("invalidUser")).thenThrow(new RuntimeException("User not found"));
-
-        // When & Then
-        mockMvc.perform(get("/users/location")
-                        .param("userName", "invalidUser"))
-                .andExpect(status().isNotFound());
     }
 
     // Tests for @GetMapping("/nearby-attractions") - getNearbyAttractionsWithDetails()
@@ -197,17 +182,6 @@ class TourGuideControllerTest {
                 .andExpect(jsonPath("$[0].attractionRewardPoints").value(100));
     }
 
-    @Test
-    void getNearbyAttractionsWithDetails_WithInvalidUser_ShouldReturnNotFound() throws Exception {
-        // Given
-        when(tourGuideService.getUser("invalidUser")).thenThrow(new RuntimeException("User not found"));
-
-        // When & Then
-        mockMvc.perform(get("/users/nearby-attractions")
-                        .param("userName", "invalidUser"))
-                .andExpect(status().isNotFound());
-    }
-
     // Tests for @GetMapping("/attractions") - getNearbyAttractions()
     @Test
     void getNearbyAttractions_WithValidUser_ShouldReturnSimpleAttractions() throws Exception {
@@ -227,17 +201,6 @@ class TourGuideControllerTest {
                 .andExpect(jsonPath("$[1].attractionName").value("Universal Studios"));
     }
 
-    @Test
-    void getNearbyAttractions_WithInvalidUser_ShouldReturnNotFound() throws Exception {
-        // Given
-        when(tourGuideService.getUser("invalidUser")).thenThrow(new RuntimeException("User not found"));
-
-        // When & Then
-        mockMvc.perform(get("/users/attractions")
-                        .param("userName", "invalidUser"))
-                .andExpect(status().isNotFound());
-    }
-
     // Tests for @GetMapping("/rewards") - getUserRewards()
     @Test
     void getUserRewards_WithValidUser_ShouldReturnRewards() throws Exception {
@@ -255,18 +218,6 @@ class TourGuideControllerTest {
                 .andExpect(jsonPath("$[0].rewardPoints").value(100))
                 .andExpect(jsonPath("$[1].rewardPoints").value(150));
     }
-
-    @Test
-    void getUserRewards_WithInvalidUser_ShouldReturnNotFound() throws Exception {
-        // Given
-        when(tourGuideService.getUser("invalidUser")).thenThrow(new RuntimeException("User not found"));
-
-        // When & Then
-        mockMvc.perform(get("/users/rewards")
-                        .param("userName", "invalidUser"))
-                .andExpect(status().isNotFound());
-    }
-
 
     // Tests for @GetMapping("/trip-deals") - getTripDeals()
     @Test
@@ -288,14 +239,26 @@ class TourGuideControllerTest {
                 .andExpect(jsonPath("$[1].price").value(750.0));
     }
 
-    @Test
-    void getTripDeals_WithInvalidUser_ShouldReturnNotFound() throws Exception {
+    //Parameterized test for error testing
+    @ParameterizedTest
+    @MethodSource("userEndpointsRequiringValidUser")
+    void userEndpoints_WithInvalidUser_ShouldReturnNotFound(String endpoint) throws Exception {
         // Given
-        when(tourGuideService.getUser("invalidUser")).thenThrow(new RuntimeException("User not found"));
+        when(tourGuideService.getUser(INVALID_USER)).thenThrow(new RuntimeException("User not found"));
 
         // When & Then
-        mockMvc.perform(get("/users/trip-deals")
-                        .param("userName", "invalidUser"))
+        mockMvc.perform(get(endpoint).param(USER_PARAM, INVALID_USER))
                 .andExpect(status().isNotFound());
+    }
+
+    private static Stream<String> userEndpointsRequiringValidUser() {
+        return Stream.of(
+                "/users/profile",
+                "/users/location",
+                "/users/nearby-attractions",
+                "/users/attractions",
+                "/users/rewards",
+                "/users/trip-deals"
+        );
     }
 }
