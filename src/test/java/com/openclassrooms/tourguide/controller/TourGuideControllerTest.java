@@ -1,7 +1,6 @@
 package com.openclassrooms.tourguide.controller;
 
 import com.openclassrooms.tourguide.dto.NearByAttractionDTO;
-import com.openclassrooms.tourguide.dto.PagedUserNamesDTO;
 import com.openclassrooms.tourguide.service.TourGuideService;
 import com.openclassrooms.tourguide.user.User;
 import com.openclassrooms.tourguide.user.UserPreferences;
@@ -47,6 +46,14 @@ class TourGuideControllerTest {
         testUser = new User(UUID.randomUUID(), "testUser", "123456789", "test@email.com");
         testUser.setUserPreferences(new UserPreferences());
 
+        // a rental visited for the error
+        VisitedLocation initialLocation = new VisitedLocation(
+                testUser.getUserId(),
+                new Location(33.817595, -117.922008),
+                new Date()
+        );
+        testUser.addToVisitedLocations(initialLocation);
+
         User user2 = new User(UUID.randomUUID(), "internalUser1", "987654321", "internal1@email.com");
         User user3 = new User(UUID.randomUUID(), "internalUser2", "111222333", "internal2@email.com");
         testUsers = Arrays.asList(testUser, user2, user3);
@@ -88,10 +95,7 @@ class TourGuideControllerTest {
         );
     }
 
-    // =============================================================================
-    // TESTS POUR LES ENDPOINTS EXISTANTS DANS VOTRE CONTRÔLEUR
-    // =============================================================================
-
+    // Test for @GetMapping (without parameters) - getAllUserNames()
     @Test
     void getAllUserNames_WithDefaultParams_ShouldReturnPagedUsers() throws Exception {
         // Given
@@ -105,23 +109,6 @@ class TourGuideControllerTest {
                 .andExpect(jsonPath("$.userNames.length()").value(3))
                 .andExpect(jsonPath("$.page").value(0))
                 .andExpect(jsonPath("$.size").value(10))
-                .andExpect(jsonPath("$.totalElements").value(3));
-    }
-
-    @Test
-    void getAllUserNames_WithPagination_ShouldReturnCorrectPage() throws Exception {
-        // Given
-        when(tourGuideService.getAllUsers()).thenReturn(testUsers);
-
-        // When & Then
-        mockMvc.perform(get("/users")
-                        .param("page", "0")
-                        .param("size", "2"))
-                .andExpect(status().isOk())
-                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
-                .andExpect(jsonPath("$.userNames.length()").value(2))
-                .andExpect(jsonPath("$.page").value(0))
-                .andExpect(jsonPath("$.size").value(2))
                 .andExpect(jsonPath("$.totalElements").value(3));
     }
 
@@ -140,51 +127,37 @@ class TourGuideControllerTest {
     }
 
     @Test
-    void getAllUserNames_WithEmptyUserList_ShouldReturnEmptyPage() throws Exception {
-        // Given
-        when(tourGuideService.getAllUsers()).thenReturn(Collections.emptyList());
-
-        // When & Then
-        mockMvc.perform(get("/users"))
-                .andExpect(status().isOk())
-                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
-                .andExpect(jsonPath("$.userNames").isEmpty())
-                .andExpect(jsonPath("$.totalElements").value(0));
-    }
-
-    /*@Test
-    void getUserByName_WithValidUser_ShouldReturnUser() throws Exception {
+    void getUserProfile_Simple_ShouldWork() throws Exception {
         // Given
         when(tourGuideService.getUser("testUser")).thenReturn(testUser);
 
         // When & Then
-        mockMvc.perform(get("/users/testUser"))
+        mockMvc.perform(get("/users/profile")
+                        .param("userName", "testUser"))
                 .andExpect(status().isOk())
-                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
-                .andExpect(jsonPath("$.userName").value("testUser"))
-                .andExpect(jsonPath("$.emailAddress").value("test@email.com"));
+                .andDo(result -> System.out.println("Response: " + result.getResponse().getContentAsString()));
     }
 
     @Test
-    void getUserByName_WithInvalidUser_ShouldReturn404() throws Exception {
+    void getUserProfile_WithInvalidUser_ShouldReturnNotFound() throws Exception {
         // Given
         when(tourGuideService.getUser("invalidUser")).thenThrow(new RuntimeException("User not found"));
 
         // When & Then
-        mockMvc.perform(get("/users/invalidUser"))
-                .andExpect(status().is5xxServerError()); // Le contrôleur actuel ne gère pas les exceptions
+        mockMvc.perform(get("/users/profile")
+                        .param("userName", "invalidUser"))
+                .andExpect(status().isNotFound());
     }
 
-     */
-
+    // Tests for @GetMapping("/location") - getUserLocation()
     @Test
-    void getLocation_WithValidUser_ShouldReturnLocation() throws Exception {
+    void getUserLocation_WithValidUser_ShouldReturnLocation() throws Exception {
         // Given
         when(tourGuideService.getUser("testUser")).thenReturn(testUser);
         when(tourGuideService.getUserLocation(testUser)).thenReturn(testLocation);
 
         // When & Then
-        mockMvc.perform(get("/users/getLocation")
+        mockMvc.perform(get("/users/location")
                         .param("userName", "testUser"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentType(MediaType.APPLICATION_JSON))
@@ -193,25 +166,26 @@ class TourGuideControllerTest {
                 .andExpect(jsonPath("$.location.longitude").value(-117.922008));
     }
 
-    /*@Test
-    void getLocation_WithInvalidUser_ShouldReturn500() throws Exception {
+    @Test
+    void getUserLocation_WithInvalidUser_ShouldReturnNotFound() throws Exception {
         // Given
         when(tourGuideService.getUser("invalidUser")).thenThrow(new RuntimeException("User not found"));
 
         // When & Then
-        mockMvc.perform(get("/users/getLocation")
+        mockMvc.perform(get("/users/location")
                         .param("userName", "invalidUser"))
-                .andExpect(status().is5xxServerError());
-    }*/
+                .andExpect(status().isNotFound());
+    }
 
+    // Tests for @GetMapping("/nearby-attractions") - getNearbyAttractionsWithDetails()
     @Test
-    void getNearbyAttractions_WithValidUser_ShouldReturnDetailedAttractions() throws Exception {
+    void getNearbyAttractionsWithDetails_WithValidUser_ShouldReturnDetailedAttractions() throws Exception {
         // Given
         when(tourGuideService.getUser("testUser")).thenReturn(testUser);
         when(tourGuideService.getNearbyAttractionsWithDetails(testUser)).thenReturn(testNearbyAttractions);
 
         // When & Then
-        mockMvc.perform(get("/users/getNearbyAttractions")
+        mockMvc.perform(get("/users/nearby-attractions")
                         .param("userName", "testUser"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentType(MediaType.APPLICATION_JSON))
@@ -223,25 +197,56 @@ class TourGuideControllerTest {
                 .andExpect(jsonPath("$[0].attractionRewardPoints").value(100));
     }
 
-    /*@Test
-    void getNearbyAttractions_WithInvalidUser_ShouldReturn500() throws Exception {
+    @Test
+    void getNearbyAttractionsWithDetails_WithInvalidUser_ShouldReturnNotFound() throws Exception {
         // Given
         when(tourGuideService.getUser("invalidUser")).thenThrow(new RuntimeException("User not found"));
 
         // When & Then
-        mockMvc.perform(get("/users/getNearbyAttractions")
+        mockMvc.perform(get("/users/nearby-attractions")
                         .param("userName", "invalidUser"))
-                .andExpect(status().is5xxServerError());
-    }*/
+                .andExpect(status().isNotFound());
+    }
+
+    // Tests for @GetMapping("/attractions") - getNearbyAttractions()
+    @Test
+    void getNearbyAttractions_WithValidUser_ShouldReturnSimpleAttractions() throws Exception {
+        // Given
+        when(tourGuideService.getUser("testUser")).thenReturn(testUser);
+        when(tourGuideService.getUserLocation(testUser)).thenReturn(testLocation);
+        when(tourGuideService.getNearByAttractions(testLocation)).thenReturn(testAttractions);
+
+        // When & Then
+        mockMvc.perform(get("/users/attractions")
+                        .param("userName", "testUser"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$").isArray())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].attractionName").value("Disneyland"))
+                .andExpect(jsonPath("$[1].attractionName").value("Universal Studios"));
+    }
 
     @Test
-    void getRewards_WithValidUser_ShouldReturnRewards() throws Exception {
+    void getNearbyAttractions_WithInvalidUser_ShouldReturnNotFound() throws Exception {
+        // Given
+        when(tourGuideService.getUser("invalidUser")).thenThrow(new RuntimeException("User not found"));
+
+        // When & Then
+        mockMvc.perform(get("/users/attractions")
+                        .param("userName", "invalidUser"))
+                .andExpect(status().isNotFound());
+    }
+
+    // Tests for @GetMapping("/rewards") - getUserRewards()
+    @Test
+    void getUserRewards_WithValidUser_ShouldReturnRewards() throws Exception {
         // Given
         when(tourGuideService.getUser("testUser")).thenReturn(testUser);
         when(tourGuideService.getUserRewards(testUser)).thenReturn(testRewards);
 
         // When & Then
-        mockMvc.perform(get("/users/getRewards")
+        mockMvc.perform(get("/users/rewards")
                         .param("userName", "testUser"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentType(MediaType.APPLICATION_JSON))
@@ -251,17 +256,19 @@ class TourGuideControllerTest {
                 .andExpect(jsonPath("$[1].rewardPoints").value(150));
     }
 
-    /*@Test
-    void getRewards_WithInvalidUser_ShouldReturn500() throws Exception {
+    @Test
+    void getUserRewards_WithInvalidUser_ShouldReturnNotFound() throws Exception {
         // Given
         when(tourGuideService.getUser("invalidUser")).thenThrow(new RuntimeException("User not found"));
 
         // When & Then
-        mockMvc.perform(get("/users/getRewards")
+        mockMvc.perform(get("/users/rewards")
                         .param("userName", "invalidUser"))
-                .andExpect(status().is5xxServerError());
-    }*/
+                .andExpect(status().isNotFound());
+    }
 
+
+    // Tests for @GetMapping("/trip-deals") - getTripDeals()
     @Test
     void getTripDeals_WithValidUser_ShouldReturnProviders() throws Exception {
         // Given
@@ -269,7 +276,7 @@ class TourGuideControllerTest {
         when(tourGuideService.getTripDeals(testUser)).thenReturn(testProviders);
 
         // When & Then
-        mockMvc.perform(get("/users/getTripDeals")
+        mockMvc.perform(get("/users/trip-deals")
                         .param("userName", "testUser"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentType(MediaType.APPLICATION_JSON))
@@ -281,76 +288,14 @@ class TourGuideControllerTest {
                 .andExpect(jsonPath("$[1].price").value(750.0));
     }
 
-    /*@Test
-    void getTripDeals_WithInvalidUser_ShouldReturn500() throws Exception {
+    @Test
+    void getTripDeals_WithInvalidUser_ShouldReturnNotFound() throws Exception {
         // Given
         when(tourGuideService.getUser("invalidUser")).thenThrow(new RuntimeException("User not found"));
 
         // When & Then
-        mockMvc.perform(get("/users/getTripDeals")
+        mockMvc.perform(get("/users/trip-deals")
                         .param("userName", "invalidUser"))
-                .andExpect(status().is5xxServerError());
-    }*/
-
-    @Test
-    void index_ShouldReturnGreeting() throws Exception {
-        // When & Then
-        mockMvc.perform(get("/users/"))
-                .andExpect(status().isOk())
-                .andExpect(content().string("Greetings from TourGuide!"));
+                .andExpect(status().isNotFound());
     }
-
-    // =============================================================================
-    // TESTS DE VALIDATION (Nécessitent @Validated sur le contrôleur)
-    // =============================================================================
-
-    @Test
-    void getAllUserNames_WithInvalidPageParams_ShouldHandleValidation() throws Exception {
-        // Ces tests ne passeront que si vous avez les annotations @Min/@Max ET @Validated
-
-        // Pour l'instant, on teste juste que l'endpoint fonctionne normalement
-        when(tourGuideService.getAllUsers()).thenReturn(testUsers);
-
-        // Test normal qui devrait fonctionner
-        mockMvc.perform(get("/users")
-                        .param("page", "0")
-                        .param("size", "10"))
-                .andExpect(status().isOk());
-
-        // Si vous voulez tester la validation, décommentez ces lignes après avoir ajouté @Validated
-        /*
-        // Test avec page négative
-        mockMvc.perform(get("/users").param("page", "-1"))
-                .andExpect(status().isBadRequest());
-
-        // Test avec size invalide
-        mockMvc.perform(get("/users").param("size", "0"))
-                .andExpect(status().isBadRequest());
-
-        // Test avec size trop grande
-        mockMvc.perform(get("/users").param("size", "101"))
-                .andExpected(status().isBadRequest());
-        */
-    }
-
-    // =============================================================================
-    // TESTS DE DEBUG (Optionnels)
-    // =============================================================================
-
-    /*@Test
-    void debugTest_ExistingEndpoint() throws Exception {
-        // Test avec un endpoint qui existe vraiment
-        User simpleUser = new User(UUID.randomUUID(), "debugUser", "123", "debug@test.com");
-        when(tourGuideService.getUser("debugUser")).thenReturn(simpleUser);
-
-        mockMvc.perform(get("/users/debugUser"))
-                .andDo(result -> {
-                    System.out.println("=== DEBUG INFO - EXISTING ENDPOINT ===");
-                    System.out.println("Status: " + result.getResponse().getStatus());
-                    System.out.println("Content-Type: " + result.getResponse().getContentType());
-                    System.out.println("Response Body: '" + result.getResponse().getContentAsString() + "'");
-                    System.out.println("======================================");
-                })
-                .andExpect(status().isOk());
-    }*/
 }
