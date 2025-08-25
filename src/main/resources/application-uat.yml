@@ -1,5 +1,5 @@
 server:
-  port: ${SERVER_PORT:8091}
+  port: ${SERVER_PORT:8091}  # Use the environment variable
 
 logging:
   level:
@@ -12,7 +12,7 @@ logging:
 
 management:
   server:
-    port: ${SERVER_PORT:8091}
+    port: ${SERVER_PORT:8091} # Same port as the application
   endpoints:
     web:
       exposure:
