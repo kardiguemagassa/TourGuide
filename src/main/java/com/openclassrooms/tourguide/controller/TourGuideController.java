@@ -5,10 +5,15 @@ import java.util.stream.Collectors;
 
 import com.openclassrooms.tourguide.dto.NearByAttractionDTO;
 import com.openclassrooms.tourguide.dto.PagedUserNamesDTO;
+
+import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.validation.annotation.Validated;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 
 import org.springframework.http.ResponseEntity;
+
 import org.springframework.web.bind.annotation.*;
 
 import gpsUtil.location.Attraction;
@@ -22,6 +27,7 @@ import tripPricer.Provider;
 
 @RestController
 @RequestMapping("/users")
+@Validated
 public class TourGuideController {
 
     private final TourGuideService tourGuideService;
