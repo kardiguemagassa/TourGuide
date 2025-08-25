@@ -1165,45 +1165,56 @@ def cleanupDockerImages(config) {
 
 def displayBuildInfo(config) {
     echo """
-    ================================================================================================================
-                  🚀 CONFIGURATION BUILD TOURGUIDE WITH NEXUS + SONARQUBE
-    =================================================================================================================
-     Build #: ${env.BUILD_NUMBER}
-     Branch: ${env.BRANCH_NAME}
-     Environment: ${env.ENV_NAME}
-     Port externe: ${env.HTTP_PORT}
-     Java: 21
-     Docker: ${env.DOCKER_AVAILABLE == "true" ? "✅ Available" : "⚠️ Unavailable"}
-     Tag: ${env.CONTAINER_TAG}
-     Service: ${config.serviceName}
-
-     🔧 Port Configuration:
-     • dev (default) : 8090
-     • uat (develop) : 8091
-     • prod (master) : 8092
-
-     ⚙️ NEXUS STATUS:
-     • Activated: ${config.nexus.enabled ? "✅" : "❌"}
-     ${config.nexus.enabled ? "• URL: ${config.nexus.url}" : "• Mode: Standard Maven"}
-     ${config.nexus.enabled ? "• Config File: ${config.nexus.configFileId}" : ""}
-
-     🔍 SONARQUBE STATUS:
-     • Activated: ${config.sonar.enabled ? "✅" : "❌"}
-     ${config.sonar.enabled ? "• Installation: ${config.sonar.installationName}" : "• Mode: Without analysis"}
-     ${config.sonar.enabled ? "• Project Key: ${config.sonar.projectKey}" : ""}
-     ${config.sonar.enabled ? "• Quality Gate: Activated" : ""}
-
-     🛡️ SECURITY:
-     • OWASP: Easy mode with Nexus
-     • Coverage: JaCoCo standard
-     • Tests: Configuration Java 21
-     • SonarQube: ${config.sonar.enabled ? "Analyse via Jenkins" : "Disabled"}
-
-     🐳 DOCKER:
-     • Compose: Configuration Java 21
-     • Health Check: Automatic
-     • JVM Options: Java 21
-    ==================================================================================================================
+╔══════════════════════════════════════════════════════════════════════════════════════╗
+║                    🚀 TOURGUIDE BUILD CONFIGURATION                                  ║
+╠══════════════════════════════════════════════════════════════════════════════════════╣
+║                                                                                      ║
+║  📋 BUILD DETAILS                                                                    ║
+║  ──────────────────────────────────────────────────────────────────────────────────  ║
+║  Build #         : ${env.BUILD_NUMBER}                                               ║
+║  Branch          : ${env.BRANCH_NAME}                                                ║
+║  Environment     : ${env.ENV_NAME}                                                   ║
+║  External Port   : ${env.HTTP_PORT}                                                  ║
+║  Java Version    : 21                                                                ║
+║  Docker Status   : ${env.DOCKER_AVAILABLE == "true" ? "✅ Available" : "⚠️ Unavailable"}        ║
+║  Container Tag   : ${env.CONTAINER_TAG}                                              ║
+║  Service Name    : ${config.serviceName}                                             ║
+║                                                                                      ║
+║  🔧 PORT MAPPING                                                                     ║
+║  ──────────────────────────────────────────────────────────────────────────────────  ║
+║  • Development (default) ────────── 8090                                            ║
+║  • UAT Testing  (develop) ────────── 8091                                           ║
+║  • Production   (master)  ────────── 8092                                           ║
+║                                                                                      ║
+║  ⚙️ NEXUS REPOSITORY                                                                 ║
+║  ──────────────────────────────────────────────────────────────────────────────────  ║
+║  Status          : ${config.nexus.enabled ? "✅ Enabled" : "❌ Disabled"}          ║${config.nexus.enabled ? """
+║  Repository URL  : ${config.nexus.url}                                              ║
+║  Configuration   : ${config.nexus.configFileId}                                     ║""" : """
+║  Mode            : Standard Maven Repository                                         ║"""}
+║                                                                                      ║
+║  🔍 SONARQUBE ANALYSIS                                                               ║
+║  ──────────────────────────────────────────────────────────────────────────────────  ║
+║  Status          : ${config.sonar.enabled ? "✅ Enabled" : "❌ Disabled"}           ║${config.sonar.enabled ? """
+║  Installation    : ${config.sonar.installationName}                                 ║
+║  Project Key     : ${config.sonar.projectKey}                                       ║
+║  Quality Gate    : ✅ Active""" : """
+║  Analysis Mode   : Disabled for this build"""}                                      ║
+║                                                                                      ║
+║  🛡️ SECURITY & QUALITY                                                               ║
+║  ──────────────────────────────────────────────────────────────────────────────────  ║
+║  OWASP Dependency Check ─────────── Easy mode with Nexus                            ║
+║  Code Coverage ─────────────────── JaCoCo Standard                                  ║
+║  Unit Tests ────────────────────── Java 21 Configuration                            ║
+║  Static Analysis ───────────────── ${config.sonar.enabled ? "SonarQube via Jenkins" : "Disabled"}    ║
+║                                                                                      ║
+║  🐳 DOCKER DEPLOYMENT                                                                ║
+║  ──────────────────────────────────────────────────────────────────────────────────  ║
+║  Docker Compose ────────────────── Java 21 Configuration                            ║
+║  Health Checks ─────────────────── Automatic monitoring                             ║
+║  JVM Optimization ──────────────── Java 21 tuned                                    ║
+║                                                                                      ║
+╚══════════════════════════════════════════════════════════════════════════════════════╝
     """
 }
 
