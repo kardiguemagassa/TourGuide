@@ -5,7 +5,13 @@ import java.util.stream.Collectors;
 
 import com.openclassrooms.tourguide.dto.NearByAttractionDTO;
 import com.openclassrooms.tourguide.dto.PagedUserNamesDTO;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import gpsUtil.location.Attraction;
@@ -21,49 +27,23 @@ import tripPricer.Provider;
 @RequestMapping("/users")
 public class TourGuideController {
 
-	@Autowired
-	TourGuideService tourGuideService;
-	
-    @RequestMapping("/")
-    public String index() {
-        return "Greetings from TourGuide!";
-    }
-    
-    @RequestMapping("/getLocation") 
-    public VisitedLocation getLocation(@RequestParam String userName) {
-    	return tourGuideService.getUserLocation(getUser(userName));
-    }
-    
-    //  TODO: Change this method to no longer return a List of Attractions.
- 	//  Instead: Get the closest five tourist attractions to the user - no matter how far away they are.
- 	//  Return a new JSON object that contains:
-    	// Name of Tourist attraction, 
-        // Tourist attractions lat/long, 
-        // The user's location lat/long, 
-        // The distance in miles between the user's location and each of the attractions.
-        // The reward points for visiting each Attraction.
-        //    Note: Attraction reward points can be gathered from RewardsCentral
+    private final TourGuideService tourGuideService;
 
-    // http://localhost:8080/users/getNearbyAttractions?userName=internalUser27
-    @RequestMapping("/getNearbyAttractions")
-    public List<NearByAttractionDTO> getNearbyAttractions(@RequestParam String userName) {
-        User user = getUser(userName);
-        return tourGuideService.getNearbyAttractionsWithDetails(user);
+    public TourGuideController(TourGuideService tourGuideService) {
+        this.tourGuideService = tourGuideService;
     }
 
     /**
-     * Liste paginée et filtrée des noms d'utilisateurs.
-     *
-     * Exemple :
-     * - /users?page=0&size=10 → 10 premiers utilisateurs
-     * - /users?page=1&size=5&startsWith=internalUser1 → page 2 filtrée
-     *
+     * ENDPOINTS FOR USERS
+     * Paginated and filtered list of usernames
+     * localhost:8080/users → all users (page 0, size 10)
+     * localhost:8080/users?page=1&size=5 → page 2 with 5 users
+     * localhost:8080/users?startsWith=internal → filtered by prefix
      */
-    // http://localhost:8080/users?page=1&size=5&startsWith=internalUser1
     @GetMapping
-    public PagedUserNamesDTO getAllUserNames(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size,
+    public ResponseEntity<PagedUserNamesDTO> getAllUserNames(
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "10") @Min(1) @Max(100) int size,
             @RequestParam(required = false) String startsWith) {
 
         List<String> allUserNames = tourGuideService.getAllUsers()
@@ -77,41 +57,105 @@ public class TourGuideController {
 
         List<String> pagedUserNames = allUserNames.subList(fromIndex, toIndex);
 
-        return new PagedUserNamesDTO(pagedUserNames, page, size, allUserNames.size());
+        PagedUserNamesDTO result = new PagedUserNamesDTO(pagedUserNames, page, size, allUserNames.size());
+        return ResponseEntity.ok(result);
     }
-
 
     /**
-     * Détail d'un utilisateur
-     *
+     * User profile
+     * localhost:8080/users/profile?userName=internalUser1
      */
-    // http://localhost:8080/users/internalUser1
-    @GetMapping("/{userName}")
-    public User getUserByName(@PathVariable String userName) {
+    @GetMapping("/profile")
+    public ResponseEntity<User> getUserProfile(@RequestParam String userName) {
+        try {
+            User user = getUser(userName);
+            return ResponseEntity.ok(user);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
+     * ENDPOINTS POUR LES LOCATIONS
+     * Current position of a user
+     * localhost:8080/users/location?userName=internalUser1
+     */
+    @GetMapping("/location")
+    public ResponseEntity<VisitedLocation> getUserLocation(@RequestParam String userName) {
+        try {
+            User user = getUser(userName);
+            VisitedLocation location = tourGuideService.getUserLocation(user);
+            return ResponseEntity.ok(location);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
+     * ENDPOINTS FOR ATTRACTIONS
+     * Nearby attractions with full details
+     * localhost:8080/users/nearby-attractions?userName=internalUser1
+     */
+    @GetMapping("/nearby-attractions")
+    public ResponseEntity<List<NearByAttractionDTO>> getNearbyAttractionsWithDetails(
+            @RequestParam String userName) {
+        try {
+            User user = getUser(userName);
+            List<NearByAttractionDTO> attractions = tourGuideService.getNearbyAttractionsWithDetails(user);
+            return ResponseEntity.ok(attractions);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
+     * Simple nearby attractions
+     * localhost:8080/users/attractions?userName=internalUser1
+     */
+    @GetMapping("/attractions")
+    public ResponseEntity<List<Attraction>> getNearbyAttractions(@RequestParam String userName) {
+        try {
+            User user = getUser(userName);
+            VisitedLocation visitedLocation = tourGuideService.getUserLocation(user);
+            List<Attraction> attractions = tourGuideService.getNearByAttractions(visitedLocation);
+            return ResponseEntity.ok(attractions);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
+     * ENDPOINTS FOR REWARDS AND OFFERS
+     * User Rewards
+     * localhost:8080/users/rewards?userName=internalUser1
+     */
+    @GetMapping("/rewards")
+    public ResponseEntity<List<UserReward>> getUserRewards(@RequestParam String userName) {
+        try {
+            User user = getUser(userName);
+            List<UserReward> rewards = tourGuideService.getUserRewards(user);
+            return ResponseEntity.ok(rewards);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
+     * Travel offers for a user
+     * localhost:8080/users/trip-deals?userName=internalUser1
+     */
+    @GetMapping("/trip-deals")
+    public ResponseEntity<List<Provider>> getTripDeals(@RequestParam String userName) {
+        try {
+            User user = getUser(userName);
+            List<Provider> deals = tourGuideService.getTripDeals(user);
+            return ResponseEntity.ok(deals);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    private User getUser(String userName) {
         return tourGuideService.getUser(userName);
     }
-
-
-
-    /*@RequestMapping("/getNearbyAttractions")
-    public List<Attraction> getNearbyAttractionss(@RequestParam String userName) {
-    	VisitedLocation visitedLocation = tourGuideService.getUserLocation(getUser(userName));
-    	return tourGuideService.getNearByAttractions(visitedLocation);
-    }*/
-    
-    @RequestMapping("/getRewards") 
-    public List<UserReward> getRewards(@RequestParam String userName) {
-    	return tourGuideService.getUserRewards(getUser(userName));
-    }
-       
-    @RequestMapping("/getTripDeals")
-    public List<Provider> getTripDeals(@RequestParam String userName) {
-    	return tourGuideService.getTripDeals(getUser(userName));
-    }
-    
-    private User getUser(String userName) {
-    	return tourGuideService.getUser(userName);
-    }
-   
-
 }
