@@ -5,12 +5,9 @@ import java.util.stream.Collectors;
 
 import com.openclassrooms.tourguide.dto.NearByAttractionDTO;
 import com.openclassrooms.tourguide.dto.PagedUserNamesDTO;
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
+
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
