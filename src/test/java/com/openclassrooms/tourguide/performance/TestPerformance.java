@@ -1,4 +1,4 @@
-package com.openclassrooms.tourguide;
+package com.openclassrooms.tourguide.performance;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;

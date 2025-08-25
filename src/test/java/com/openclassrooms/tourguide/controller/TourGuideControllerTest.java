@@ -43,7 +43,7 @@ class TourGuideControllerTest {
     private List<UserReward> testRewards;
     private List<Provider> testProviders;
 
-    // Constantes pour le test paramétrisé
+    // Constants for the parameterized test
     private static final String INVALID_USER = "invalidUser";
     private static final String USER_PARAM = "userName";
 
