@@ -165,7 +165,7 @@ public class TourGuideService {
 
 		} catch (Exception e) {
 			LOGGER.error("Error tracking user  {}: {}", user.getUserName(), e.getMessage());
-			throw e;
+			throw new RuntimeException("Failed to track location for user: " + user.getUserName(), e);
 		}
 	}
 
