@@ -146,27 +146,21 @@ public class TourGuideService {
 
 	// Synchronous method for testing mandatory to comply with instructions
 	public VisitedLocation trackUserLocation(User user) {
-		try {
-			// GPS time measurement
-			long start = System.nanoTime();
-			VisitedLocation visitedLocation = gpsUtil.getUserLocation(user.getUserId());
-			long gpsTime = System.nanoTime() - start;
+		// GPS time measurement
+		long start = System.nanoTime();
+		VisitedLocation visitedLocation = gpsUtil.getUserLocation(user.getUserId());
+		long gpsTime = System.nanoTime() - start;
 
-			if (LOGGER.isDebugEnabled()) {
-				LOGGER.debug("GPS call for user {}: {} ms", user.getUserName(), gpsTime / 1_000_000);
-			}
-
-			user.addToVisitedLocations(visitedLocation);
-
-			// Calculation of rewards in the background (does not block the return)
-			rewardsService.calculateRewardsAsync(user);
-
-			return visitedLocation;
-
-		} catch (Exception e) {
-			LOGGER.error("Error tracking user  {}: {}", user.getUserName(), e.getMessage());
-			throw new RuntimeException("Failed to track location for user: " + user.getUserName(), e);
+		if (LOGGER.isDebugEnabled()) {
+			LOGGER.debug("GPS call for user {}: {} ms", user.getUserName(), gpsTime / 1_000_000);
 		}
+
+		user.addToVisitedLocations(visitedLocation);
+
+		// Calculation of rewards in the background (does not block the return)
+		rewardsService.calculateRewardsAsync(user);
+
+		return visitedLocation;
 	}
 
 	public List<NearByAttractionDTO> getNearbyAttractionsWithDetails(User user) {
