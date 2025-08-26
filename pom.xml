@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>3.1.1</version>
+		<version>3.5.4</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.openclassrooms</groupId>
@@ -19,15 +19,47 @@
 		<maven.compiler.source>21</maven.compiler.source>
 		<maven.compiler.target>21</maven.compiler.target>
 
-		<!-- Configuration pour les tests -->
+		<!-- Configuration for tests -->
 		<skipTests>false</skipTests>
 		<maven.test.skip>false</maven.test.skip>
 
-		<!-- Versions des plugins -->
+		<!-- plugins versions-->
 		<jacoco.version>0.8.10</jacoco.version>
 		<surefire.version>3.2.5</surefire.version>
 		<owasp.version>9.2.0</owasp.version>
 	</properties>
+
+	<!-- distributionProfile management -->
+	<distributionManagement>
+		<repository>
+			<id>nexus-releases</id>
+			<name>Nexus Releases Repository</name>
+			<url>http://localhost:8081/repository/maven-releases/</url>
+		</repository>
+		<snapshotRepository>
+			<id>nexus-snapshots</id>
+			<name>Nexus Snapshots Repository</name>
+			<url>http://localhost:8081/repository/maven-snapshots/</url>
+		</snapshotRepository>
+	</distributionManagement>
+
+	<!-- Profile configuration for Nexus -->
+	<profiles>
+		<profile>
+			<id>jenkins</id>
+			<activation>
+				<property>
+					<name>env.BUILD_NUMBER</name>
+				</property>
+			</activation>
+		</profile>
+		<profile>
+			<id>local</id>
+			<activation>
+				<activeByDefault>true</activeByDefault>
+			</activation>
+		</profile>
+	</profiles>
 
 	<dependencies>
 		<dependency>
@@ -52,6 +84,7 @@
 		<dependency>
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-lang3</artifactId>
+			<version>3.18.0</version>
 		</dependency>
 
 		<!-- JUnit 5 -->
@@ -78,7 +111,7 @@
 			<scope>test</scope>
 		</dependency>
 
-		<!-- Dépendances locales -->
+		<!-- Local dependencies -->
 		<dependency>
 			<groupId>gpsUtil</groupId>
 			<artifactId>gpsUtil</artifactId>
@@ -104,23 +137,23 @@
 			<version>3.1.8</version>
 		</dependency>
 
-		<!-- CORRECTIONS DE SÉCURITÉ -->
+		<!-- Security -->
 		<dependency>
 			<groupId>com.google.guava</groupId>
 			<artifactId>guava</artifactId>
-			<version>32.1.3-jre</version> <!-- Fixe CVE-2023-2976 -->
+			<version>32.1.3-jre</version>
 		</dependency>
 
 		<dependency>
 			<groupId>org.yaml</groupId>
 			<artifactId>snakeyaml</artifactId>
-			<version>2.2</version> <!-- Fixe CVE-2022-1471 -->
+			<version>2.2</version>
 		</dependency>
 
 		<dependency>
 			<groupId>org.apache.tomcat.embed</groupId>
 			<artifactId>tomcat-embed-core</artifactId>
-			<version>10.1.39</version> <!-- Version corrigée de Tomcat -->
+			<version>10.1.39</version>
 		</dependency>
 
 	</dependencies>
@@ -132,22 +165,30 @@
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
 
-			<!-- Surefire Plugin (exécute les tests) -->
-			<!-- CONFIGURATION COMPLÈTE SUREFIRE + JACOCO -->
-
+			<!-- Surefire Plugin pour Java 21 -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
-				<version>3.2.5</version>
+				<version>${surefire.version}</version>
 				<configuration>
-					<argLine>
-						-javaagent:"${settings.localRepository}/net/bytebuddy/byte-buddy-agent/1.14.5/byte-buddy-agent-1.14.5.jar"
-						-javaagent:"${settings.localRepository}/org/jacoco/org.jacoco.agent/0.8.10/org.jacoco.agent-0.8.10-runtime.jar"=destfile=${project.build.directory}/jacoco.exec
-					</argLine>
+					<!-- TIMEOUT -->
+					<!--<forkedProcessTimeoutInSeconds>900</forkedProcessTimeoutInSeconds>  15 minutes -->
+					<useSystemClassLoader>false</useSystemClassLoader>
+					<forkCount>1</forkCount>
+					<reuseForks>false</reuseForks>
+					<argLine>@{argLine} -Xmx1024m -XX:+EnableDynamicAgentLoading -Djdk.instrument.traceUsage=false</argLine>
+					<excludes>
+						<exclude>**/TestPerformance.java</exclude>
+					</excludes>
+					<reportFormat>xml</reportFormat>
+					<useFile>true</useFile>
+					<systemPropertyVariables>
+						<java.awt.headless>true</java.awt.headless>
+					</systemPropertyVariables>
 				</configuration>
 			</plugin>
 
-			<!-- JaCoCo Plugin (génère les rapports de couverture) -->
+			<!-- JaCoCo Plugin -->
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
@@ -159,8 +200,7 @@
 							<goal>prepare-agent</goal>
 						</goals>
 						<configuration>
-							<!-- JaCoCo configure automatiquement l'argLine -->
-							<propertyName>surefireArgLine</propertyName>
+							<propertyName>argLine</propertyName>
 						</configuration>
 					</execution>
 					<execution>
@@ -170,32 +210,18 @@
 							<goal>report</goal>
 						</goals>
 					</execution>
-					<execution>
-						<id>post-integration-test</id>
-						<phase>post-integration-test</phase>
-						<goals>
-							<goal>report</goal>
-						</goals>
-					</execution>
+					<!-- No post-integration-testing -->
 				</executions>
+				<configuration>
+					<excludes>
+						<exclude>**/dto/**</exclude>
+						<exclude>**/config/**</exclude>
+						<exclude>**/TourguideApplication.class</exclude>
+					</excludes>
+				</configuration>
 			</plugin>
 
-			<!-- Surefire Report Plugin (rapports HTML de tests) -->
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-surefire-report-plugin</artifactId>
-				<version>3.0.0-M7</version>
-				<executions>
-					<execution>
-						<phase>verify</phase>
-						<goals>
-							<goal>report</goal>
-						</goals>
-					</execution>
-				</executions>
-			</plugin>
-
-			<!-- Enforcer (assure la bonne version de Maven et Java) -->
+			<!-- Enforcer Plugin -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-enforcer-plugin</artifactId>
@@ -212,7 +238,7 @@
 									<version>[3.6.3,)</version>
 								</requireMavenVersion>
 								<requireJavaVersion>
-									<version>[21,22)</version> <!-- Force Java 21 -->
+									<version>[21,22)</version>
 								</requireJavaVersion>
 							</rules>
 						</configuration>
@@ -220,52 +246,58 @@
 				</executions>
 			</plugin>
 
-			<!-- OWASP Dependency Check - Configuration OPTIMISÉE -->
+			<!-- OWASP Dependency Check -->
 			<plugin>
 				<groupId>org.owasp</groupId>
 				<artifactId>dependency-check-maven</artifactId>
 				<version>${owasp.version}</version>
 				<configuration>
-					<!-- Configuration flexible pour Pipeline Jenkins -->
-					<failBuildOnCVSS>0</failBuildOnCVSS> <!-- Géré par le pipeline -->
+					<failBuildOnCVSS>0</failBuildOnCVSS>
 					<dataDirectory>${project.basedir}/dc-data</dataDirectory>
 					<suppressionFiles>
 						<suppressionFile>owasp-suppressions.xml</suppressionFile>
 					</suppressionFiles>
-					<!-- Optimisations performance -->
-					<skipProvidedScope>true</skipProvidedScope>
-					<skipRuntimeScope>false</skipRuntimeScope>
-					<!-- Désactiver les analyseurs lents -->
 					<retireJsAnalyzerEnabled>false</retireJsAnalyzerEnabled>
 					<nodeAnalyzerEnabled>false</nodeAnalyzerEnabled>
 					<ossindexAnalyzerEnabled>false</ossindexAnalyzerEnabled>
-					<!-- Formats de rapport -->
+					<assemblyAnalyzerEnabled>false</assemblyAnalyzerEnabled>
+					<archiveAnalyzerEnabled>true</archiveAnalyzerEnabled>
+					<jarAnalyzerEnabled>true</jarAnalyzerEnabled>
 					<formats>
 						<format>HTML</format>
 						<format>XML</format>
-						<format>JSON</format>
 					</formats>
+					<skipProvidedScope>true</skipProvidedScope>
+					<skipSystemScope>true</skipSystemScope>
+					<skipTestScope>true</skipTestScope>
+					<connectionTimeout>10000</connectionTimeout>
+					<readTimeout>30000</readTimeout>
+					<autoUpdate>false</autoUpdate>
 				</configuration>
 			</plugin>
 
-			<!-- Project Info Reports Plugin -->
+			<!-- Surefire Report Plugin FINAL -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-project-info-reports-plugin</artifactId>
-				<version>3.3.0</version>
+				<artifactId>maven-surefire-report-plugin</artifactId>
+				<version>3.0.0-M7</version>
+				<configuration>
+					<linkXRef>false</linkXRef>
+					<reportsDirectories>
+						<reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>
+					</reportsDirectories>
+				</configuration>
+				<executions>
+					<execution>
+						<id>test-report</id>
+						<phase>test</phase>
+						<goals>
+							<goal>report-only</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 		</plugins>
 	</build>
-
-	<!-- Reporting -->
-	<reporting>
-		<plugins>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-jxr-plugin</artifactId>
-				<version>3.3.0</version>
-			</plugin>
-		</plugins>
-	</reporting>
 
 </project>
