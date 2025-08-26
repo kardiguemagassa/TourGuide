@@ -38,6 +38,7 @@ public class TourGuideService {
 	boolean testMode = true;
 	private static final String tripPricerApiKey = "test-server-api-key";
 
+	@SuppressWarnings("java:S2245") // Random is safe for test data generation
 	private static final Random RANDOM = new Random();
 
 	private final ExecutorService executorService;
