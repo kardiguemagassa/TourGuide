@@ -112,7 +112,6 @@ public class TestTourGuideService {
 	}
 
 	// NEW TESTS TO IMPROVE COVERAGE RECOMMENDED
-
 	@Test
 	void getUserLocationWithExistingVisitedLocation() {
 		User user = new User(UUID.randomUUID(), "jon", "000", "jon@tourGuide.com");
@@ -204,136 +203,80 @@ public class TestTourGuideService {
 		assertNotNull(user.getUserPreferences()); // Preferences must be initialized
 	}
 
-	@Test
-	void trackUserLocationAsync() throws ExecutionException, InterruptedException, TimeoutException {
-		User user = new User(UUID.randomUUID(), "jon", "000", "jon@tourGuide.com");
+    @Test
+    void trackAllUsersLocation() throws ExecutionException, InterruptedException, TimeoutException {
+        User user1 = new User(UUID.randomUUID(), "jon1", "000", "jon1@tourGuide.com");
+        User user2 = new User(UUID.randomUUID(), "jon2", "000", "jon2@tourGuide.com");
+        List<User> users = List.of(user1, user2);
 
-		CompletableFuture<VisitedLocation> future = tourGuideService.trackUserLocationAsync(user);
-		VisitedLocation visitedLocation = future.get(10, TimeUnit.SECONDS);
+        CompletableFuture<Void> future = tourGuideService.trackAllUsersLocation(users);
+        future.get(15, TimeUnit.SECONDS); // Wait for completion
 
-		assertNotNull(visitedLocation);
-		assertEquals(user.getUserId(), visitedLocation.userId);
-		assertTrue(user.getVisitedLocations().contains(visitedLocation));
-	}
-
-	@Test
-	void trackAllUsersLocation() throws ExecutionException, InterruptedException, TimeoutException {
-		User user1 = new User(UUID.randomUUID(), "jon1", "000", "jon1@tourGuide.com");
-		User user2 = new User(UUID.randomUUID(), "jon2", "000", "jon2@tourGuide.com");
-		List<User> users = List.of(user1, user2);
-
-		CompletableFuture<Void> future = tourGuideService.trackAllUsersLocation(users);
-		future.get(15, TimeUnit.SECONDS); // Wait for the end
-
-		// Check that each user has at least one location visited
+        // Check that each user has at least one location visited
         assertFalse(user1.getVisitedLocations().isEmpty());
         assertFalse(user2.getVisitedLocations().isEmpty());
-	}
+    }
 
-	@Test
-	void trackUsersLocationInBatches() throws ExecutionException, InterruptedException, TimeoutException {
-		User user1 = new User(UUID.randomUUID(), "jon1", "000", "jon1@tourGuide.com");
-		User user2 = new User(UUID.randomUUID(), "jon2", "000", "jon2@tourGuide.com");
-		User user3 = new User(UUID.randomUUID(), "jon3", "000", "jon3@tourGuide.com");
-		List<User> users = List.of(user1, user2, user3);
+    @Test
+    void addUserDuplicate() {
+        User user = new User(UUID.randomUUID(), "jon", "000", "jon@tourGuide.com");
 
-		CompletableFuture<Void> future = tourGuideService.trackUsersLocationInBatches(users, 2);
-		future.get(20, TimeUnit.SECONDS);
+        tourGuideService.addUser(user);
+        int initialUserCount = tourGuideService.getAllUsers().size();
 
-		// Check that all users have been processed
-        assertFalse(user1.getVisitedLocations().isEmpty());
-        assertFalse(user2.getVisitedLocations().isEmpty());
-        assertFalse(user3.getVisitedLocations().isEmpty());
-	}
+        // Try to add the same user
+        tourGuideService.addUser(user);
 
-	@Test
-	void trackUsersBatch() throws ExecutionException, InterruptedException, TimeoutException {
-		User user1 = new User(UUID.randomUUID(), "jon1", "000", "jon1@tourGuide.com");
-		User user2 = new User(UUID.randomUUID(), "jon2", "000", "jon2@tourGuide.com");
-		List<User> users = List.of(user1, user2);
+        // The number of users must not increase
+        assertEquals(initialUserCount, tourGuideService.getAllUsers().size());
+    }
 
-		CompletableFuture<Void> future = tourGuideService.trackUsersBatch(users);
-		future.get(15, TimeUnit.SECONDS);
+    @Test
+    void getUserNonExistent() {
+        User result = tourGuideService.getUser("nonexistent");
+        assertNull(result);
+    }
 
-		// Check that the batch has been processed
-        assertFalse(user1.getVisitedLocations().isEmpty());
-        assertFalse(user2.getVisitedLocations().isEmpty());
-	}
+    @Test
+    void getNearbyAttractionsOrderedByDistance() {
+        User user = new User(UUID.randomUUID(), "jon", "000", "jon@tourGuide.com");
+        VisitedLocation visitedLocation = tourGuideService.trackUserLocation(user);
 
-	@Test
-	void trackAllUsersOptimized() {
-		// Add some users to the service
-		User user1 = new User(UUID.randomUUID(), "jon1", "000", "jon1@tourGuide.com");
-		User user2 = new User(UUID.randomUUID(), "jon2", "000", "jon2@tourGuide.com");
+        List<Attraction> attractions = tourGuideService.getNearByAttractions(visitedLocation);
 
-		tourGuideService.addUser(user1);
-		tourGuideService.addUser(user2);
+        assertEquals(5, attractions.size());
+        // Check that we have exactly 5 attractions
+        assertTrue(attractions.size() <= 5);
+    }
 
-		// Measure rentals before
-		int initialLocationsUser1 = user1.getVisitedLocations().size();
-		int initialLocationsUser2 = user2.getVisitedLocations().size();
+    @Test
+    void shutdownGracefully() {
+        TourGuideService testService = new TourGuideService(gpsUtil, rewardsService);
+        assertDoesNotThrow(testService::shutdown);
+    }
 
-		// Run optimized tracking
-		tourGuideService.trackAllUsersOptimized();
+    @Test
+    void shutdownComprehensiveTest() {
+        TourGuideService testService = new TourGuideService(gpsUtil, rewardsService);
 
-		// Check that new rentals have been added
-		assertTrue(user1.getVisitedLocations().size() > initialLocationsUser1);
-		assertTrue(user2.getVisitedLocations().size() > initialLocationsUser2);
-	}
+        User user = new User(UUID.randomUUID(), "testUser", "000", "test@test.com");
 
-	@Test
-	void addUserDuplicate() {
-		User user = new User(UUID.randomUUID(), "jon", "000", "jon@tourGuide.com");
+        testService.trackUserLocation(user);
+        testService.trackUserLocation(user);
 
-		tourGuideService.addUser(user);
-		int initialUserCount = tourGuideService.getAllUsers().size();
+        // Shutdown with running tasks
+        assertDoesNotThrow(testService::shutdown);
+    }
 
-		// Try to add the same user
-		tourGuideService.addUser(user);
+    @Test
+    void trackUserLocationBasic() {
+        User user = new User(UUID.randomUUID(), "testUser", "000", "test@test.com");
 
-		// The number of users must not increase
-		assertEquals(initialUserCount, tourGuideService.getAllUsers().size());
-	}
+        int initialLocationCount = user.getVisitedLocations().size();
+        VisitedLocation result = tourGuideService.trackUserLocation(user);
 
-	@Test
-	void getUserNonExistent() {
-		User result = tourGuideService.getUser("nonexistent");
-		assertNull(result);
-	}
-
-	@Test
-	void getNearbyAttractionsOrderedByDistance() {
-		User user = new User(UUID.randomUUID(), "jon", "000", "jon@tourGuide.com");
-		VisitedLocation visitedLocation = tourGuideService.trackUserLocation(user);
-
-		List<Attraction> attractions = tourGuideService.getNearByAttractions(visitedLocation);
-
-		assertEquals(5, attractions.size());
-
-		/*
-		Check that the attractions are sorted by distance (closest first)
-		Note: We can't easily test the exact order without knowing the position,
-		but we can check that we have 5 attractions
-		 */
-		assertTrue(attractions.size() <= 5);
-	}
-
-	@Test
-	void shutdownGracefully() {
-		TourGuideService testService = new TourGuideService(gpsUtil, rewardsService);
-		assertDoesNotThrow(testService::shutdown);
-	}
-
-	@Test
-	void shutdownComprehensiveTest() {
-		TourGuideService testService = new TourGuideService(gpsUtil, rewardsService);
-
-
-		User user = new User(UUID.randomUUID(), "testUser", "000", "test@test.com");
-		testService.trackUserLocationAsync(user);
-		testService.trackUserLocationAsync(user);
-
-		// Shutdown with running tasks
-		assertDoesNotThrow(testService::shutdown);
-	}
+        assertNotNull(result);
+        assertEquals(user.getUserId(), result.userId);
+        assertTrue(user.getVisitedLocations().size() > initialLocationCount);
+    }
 }

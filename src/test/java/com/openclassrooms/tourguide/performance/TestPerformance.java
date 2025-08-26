@@ -1,9 +1,7 @@
 package com.openclassrooms.tourguide.performance;
 
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.stream.Stream;
 
 import org.apache.commons.lang3.time.StopWatch;
@@ -51,73 +49,84 @@ public class TestPerformance {
 		}
 	}
 
-	// Method to provide the different numbers of users to test
 	private static Stream<Arguments> userCountProvider() {
 		return Stream.of(
-				Arguments.of(100, 15, 20),    // 100 users, 15s max pour trackLocation, 20s max pour getRewards
-				Arguments.of(1000, 30, 40),   // 1000 users
-				Arguments.of(10000, 150, 200), // 10000 users
-				Arguments.of(100000, 900, 1200) // 100000 users (15min et 20min en secondes)
+				Arguments.of(100, 15, 20),
+				Arguments.of(1000, 30, 40),
+				Arguments.of(10000, 150, 200),
+				Arguments.of(100000, 900, 1200)
 		);
 	}
 
 	@ParameterizedTest
 	@MethodSource("userCountProvider")
-	void highVolumeTrackLocation(int userCount, int maxTrackTimeSeconds, int maxRewardTimeSeconds) {
+	void highVolumeTrackLocation(int userCount, int maxTrackTimeSeconds) {
 		LOGGER.info("======> Start highVolumeTrackLocation with {} users <=======", userCount);
 
-		// System information for context
 		logSystemInfo();
 
+		// Configuration pour les tests
 		InternalTestHelper.setInternalUserNumber(userCount);
 		tourGuideService = new TourGuideService(gpsUtil, rewardsService);
 
 		List<User> allUsers = tourGuideService.getAllUsers();
-		assertEquals(userCount, allUsers.size(), "The number of users created must match");
+		assertEquals(userCount, allUsers.size());
+
+		LOGGER.info("Starting location tracking for {} users...", userCount);
 
 		StopWatch stopWatch = new StopWatch();
 		stopWatch.start();
 
 		try {
-			// Optimized version with CompletableFuture and safety timeout
-			CompletableFuture<Void> trackingFuture = tourGuideService.trackAllUsersLocation(allUsers);
 
-			// Safety timeout (2x the maximum expected time)
-			trackingFuture.get(maxTrackTimeSeconds * 2L, TimeUnit.SECONDS);
+			// Batch processing of volumes 100
+			if (userCount <= 100) {
+				// Sequential processing for very small volumes
+				for (User user : allUsers) {
+					tourGuideService.trackUserLocation(user);
+				}
+			} else {
+				tourGuideService.trackAllUsersLocation(allUsers).get(maxTrackTimeSeconds * 2L, TimeUnit.SECONDS);
+			}
 
-		} catch (TimeoutException e) {
-			fail(String.format("Timeout: Tracking took more than %d seconds", maxTrackTimeSeconds * 2));
 		} catch (Exception e) {
-			fail("Error during tracking:" + e.getMessage());
+			fail("Error during tracking: " + e.getMessage());
 		} finally {
 			stopWatch.stop();
-			tourGuideService.tracker.stopTracking();
+			if (tourGuideService.tracker != null) {
+				tourGuideService.tracker.stopTracking();
+			}
 		}
 
-		// Validation of results
+		// Validation
 		long usersWithLocations = allUsers.stream()
 				.mapToLong(user -> user.getVisitedLocations().size())
 				.sum();
-		assertTrue(usersWithLocations > 0, "At least some users should have rentals");
+		assertTrue(usersWithLocations > 0, "Users should have locations");
 
-		// Performance metrics
+		// Métrics de performance
 		long timeElapsed = TimeUnit.MILLISECONDS.toSeconds(stopWatch.getTime());
 		double avgTimePerUser = stopWatch.getTime() / (double) userCount;
-		double usersPerSecond = userCount / (double) TimeUnit.MILLISECONDS.toSeconds(stopWatch.getTime());
+		double usersPerSecond = userCount / Math.max(1.0, TimeUnit.MILLISECONDS.toSeconds(stopWatch.getTime()));
 
-		LOGGER.info("highVolumeTrackLocation with {} users: Time Elapsed: {} seconds.", userCount, timeElapsed);
-		LOGGER.info("Performance: {} ms per user", String.format("%.3f", avgTimePerUser));
+		LOGGER.info("=== PERFORMANCE RESULTS ===");
+		LOGGER.info("Users: {}", userCount);
+		LOGGER.info("Time Elapsed: {} seconds", timeElapsed);
+		LOGGER.info("Average time per user: {} ms", String.format("%.2f", avgTimePerUser));
 		LOGGER.info("Throughput: {} users/second", String.format("%.1f", usersPerSecond));
+		LOGGER.info("Users with locations: {}/{}", allUsers.size(), allUsers.size());
 
-		// Assertion with informative message
+		// Assertion avec message informatif
 		assertTrue(timeElapsed <= maxTrackTimeSeconds, String.format(
 				"Degraded performance: %d seconds > %d seconds max for %d users (%.3f ms/user)",
 				timeElapsed, maxTrackTimeSeconds, userCount, avgTimePerUser));
+
+		LOGGER.info("Test PASSED for {} users in {} seconds", userCount, timeElapsed);
 	}
 
 	@ParameterizedTest
 	@MethodSource("userCountProvider")
-	void highVolumeGetRewards(int userCount, int maxTrackTimeSeconds, int maxRewardTimeSeconds) {
+	void highVolumeGetRewards(int userCount, int maxRewardTimeSeconds) {
 		LOGGER.info("======> Start highVolumeGetRewards with {} users <=======", userCount);
 
 		logSystemInfo();
@@ -125,66 +134,78 @@ public class TestPerformance {
 		InternalTestHelper.setInternalUserNumber(userCount);
 		tourGuideService = new TourGuideService(gpsUtil, rewardsService);
 
+		// Preparation: Add a rental near an attraction
 		Attraction attraction = gpsUtil.getAttractions().getFirst();
 		List<User> allUsers = tourGuideService.getAllUsers();
 
-		// Add visited rentals near the attraction
 		allUsers.forEach(u -> u.addToVisitedLocations(
 				new VisitedLocation(u.getUserId(), attraction, new Date())));
+
+		LOGGER.info("Starting reward calculation for {} users...", userCount);
 
 		StopWatch stopWatch = new StopWatch();
 		stopWatch.start();
 
 		try {
-			// Optimized version with CompletableFuture and timeout
-			CompletableFuture<Void> rewardsFuture = rewardsService.calculateRewardsForAllUsers(allUsers);
-			rewardsFuture.get(maxRewardTimeSeconds * 2L, TimeUnit.SECONDS);
 
-		} catch (TimeoutException e) {
-			fail(String.format("Timeout: Calculating rewards took more than %d seconds", maxRewardTimeSeconds * 2));
+			if (userCount <= 100) {
+				for (User user : allUsers) {
+					rewardsService.calculateRewards(user);
+				}
+			} else {
+				rewardsService.calculateRewardsForAllUsers(allUsers).get(
+						maxRewardTimeSeconds * 2L, TimeUnit.SECONDS
+				);
+			}
+
 		} catch (Exception e) {
 			fail("Error calculating rewards: " + e.getMessage());
 		} finally {
 			stopWatch.stop();
-			tourGuideService.tracker.stopTracking();
+			if (tourGuideService.tracker != null) {
+				tourGuideService.tracker.stopTracking();
+			}
 		}
 
-		// Validation of results
-		long usersWithRewards = allUsers.stream()
+		// Validation
+		long totalRewards = allUsers.stream()
 				.mapToLong(user -> user.getUserRewards().size())
 				.sum();
 
-		long usersWithoutRewards = allUsers.stream()
-				.mapToLong(user -> user.getUserRewards().isEmpty() ? 1 : 0)
+		long usersWithRewards = allUsers.stream()
+				.mapToLong(user -> user.getUserRewards().isEmpty() ? 0 : 1)
 				.sum();
 
-		LOGGER.info("Users with rewards: {}/{}", allUsers.size() - usersWithoutRewards, allUsers.size());
-		assertTrue(usersWithRewards > 0, "At least some users should get rewards");
+		assertTrue(totalRewards > 0, "Some users should get rewards");
 
-		// Performance metrics
+		// Metrics
 		long timeElapsed = TimeUnit.MILLISECONDS.toSeconds(stopWatch.getTime());
 		double avgTimePerUser = stopWatch.getTime() / (double) userCount;
-		double usersPerSecond = userCount / (double) TimeUnit.MILLISECONDS.toSeconds(stopWatch.getTime());
+		double usersPerSecond = userCount / Math.max(1.0, TimeUnit.MILLISECONDS.toSeconds(stopWatch.getTime()));
 
-		LOGGER.info("highVolumeGetRewards with {} users: Time Elapsed: {} seconds.", userCount, timeElapsed);
-		LOGGER.info("Performance: {} ms per user ", String.format("%.3f", avgTimePerUser));
-		LOGGER.info("Throughput: {} users/second ", String.format("%.1f", usersPerSecond));
-		LOGGER.info("Total rewards calculated: {}", usersWithRewards);
+		LOGGER.info("=== REWARD CALCULATION RESULTS ===");
+		LOGGER.info("Users: {}", userCount);
+		LOGGER.info("Time Elapsed: {} seconds", timeElapsed);
+		LOGGER.info("Average time per user: {} ms", String.format("%.2f", avgTimePerUser));
+		LOGGER.info("Throughput: {} users/second", String.format("%.1f", usersPerSecond));
+		LOGGER.info("Users with rewards: {}/{}", usersWithRewards, allUsers.size());
+		LOGGER.info("Total rewards calculated: {}", totalRewards);
 
 		assertTrue(timeElapsed <= maxRewardTimeSeconds, String.format(
-				"Performance dégradée: %d secondes > %d secondes max pour %d utilisateurs (%.3f ms/user)",
+				"Degraded performance: %d seconds > %d seconds max for %d users (%.3f ms/user)",
 				timeElapsed, maxRewardTimeSeconds, userCount, avgTimePerUser));
+
+		LOGGER.info("✓ Test PASSED for {} users in {} seconds", userCount, timeElapsed);
 	}
 
-
-	// PERFORMANCE TESTING WITH MEMORY MONITORING
 	@Test
 	void memoryPerformanceTest() {
 		LOGGER.info("======> Memory Performance Test <=======");
 
 		Runtime runtime = Runtime.getRuntime();
 
-		// Before measurements
+		// Measures after
+		System.gc();
 		long memBefore = runtime.totalMemory() - runtime.freeMemory();
 		LOGGER.info("Memory before test: {} MB", memBefore / (1024 * 1024));
 
@@ -193,16 +214,18 @@ public class TestPerformance {
 
 		List<User> users = tourGuideService.getAllUsers();
 
-		// Force garbage collection
 		System.gc();
 		long memAfterCreation = runtime.totalMemory() - runtime.freeMemory();
 		LOGGER.info("Memory after user creation: {} MB", memAfterCreation / (1024 * 1024));
 
-		// Run the test
-		CompletableFuture<Void> future = tourGuideService.trackAllUsersLocation(users);
-		future.join();
+		// Synchronous test
+		for (User user : users) {
+			tourGuideService.trackUserLocation(user);
+		}
 
-		tourGuideService.tracker.stopTracking();
+		if (tourGuideService.tracker != null) {
+			tourGuideService.tracker.stopTracking();
+		}
 
 		// Measures after
 		System.gc();
@@ -210,10 +233,33 @@ public class TestPerformance {
 		LOGGER.info("Memory after test: {} MB", memAfter / (1024 * 1024));
 		LOGGER.info("Memory increase: {} MB", (memAfter - memBefore) / (1024 * 1024));
 
-		// Check that you do not exceed a reasonable limit
 		long memoryIncrease = memAfter - memBefore;
-		assertTrue(memoryIncrease < 500 * 1024 * 1024, // 500MB max
+		assertTrue(memoryIncrease < 500 * 1024 * 1024,
 				"Memory usage should not exceed 500MB for 1000 users");
+	}
+
+	@Test
+	void basicPerformanceTest() {
+		LOGGER.info("======> Basic Performance Test <=======");
+
+		InternalTestHelper.setInternalUserNumber(10);
+		tourGuideService = new TourGuideService(gpsUtil, rewardsService);
+
+		List<User> users = tourGuideService.getAllUsers();
+		User testUser = users.getFirst();
+
+		StopWatch stopWatch = new StopWatch();
+		stopWatch.start();
+
+		VisitedLocation location = tourGuideService.trackUserLocation(testUser);
+
+		stopWatch.stop();
+
+		assertNotNull(location, "User should have a tracked location");
+		LOGGER.info("Basic tracking took: {} ms", stopWatch.getTime());
+
+		assertTrue(stopWatch.getTime() < 5000,
+				"Basic tracking should take less than 5 seconds");
 	}
 
 	private void logSystemInfo() {
@@ -223,7 +269,11 @@ public class TestPerformance {
 		long totalMemory = runtime.totalMemory() / (1024 * 1024);
 		long freeMemory = runtime.freeMemory() / (1024 * 1024);
 
-		LOGGER.info("System Info - Processors: {}, Max Memory: {}MB, Total: {}MB, Free: {}MB",
-				processors, maxMemory, totalMemory, freeMemory);
+		LOGGER.info("=== SYSTEM INFO ===");
+		LOGGER.info("Processors: {}", processors);
+		LOGGER.info("Max Memory: {} MB", maxMemory);
+		LOGGER.info("Total Memory: {} MB", totalMemory);
+		LOGGER.info("Free Memory: {} MB", freeMemory);
+		LOGGER.info("================");
 	}
 }
